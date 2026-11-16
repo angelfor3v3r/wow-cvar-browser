@@ -3,30 +3,25 @@ local addon_name = ...
 -- Localized WoW APIs ---------------------------------------------------------
 
 local CreateFrame = CreateFrame
-local CreateFont = CreateFont
 local UIParent = UIParent
-local UISpecialFrames = UISpecialFrames
-local SlashCmdList = SlashCmdList
-local C_CVar = C_CVar
-local C_Console = C_Console
 local InCombatLockdown = InCombatLockdown
 local GetCursorPosition = GetCursorPosition
-local IsMouseButtonDown = IsMouseButtonDown
 local GetPhysicalScreenSize = GetPhysicalScreenSize
-local STANDARD_TEXT_FONT = STANDARD_TEXT_FONT
-local GetCVarInfo = GetCVarInfo or (C_CVar and C_CVar.GetCVarInfo)
+local GetCVarInfo = GetCVarInfo
+    or (C_CVar and C_CVar.GetCVarInfo)
 local GetCVar = GetCVar or (C_CVar and C_CVar.GetCVar)
-local GetCVarDefault = GetCVarDefault or (C_CVar and C_CVar.GetCVarDefault)
+local GetCVarDefault = GetCVarDefault
+    or (C_CVar and C_CVar.GetCVarDefault)
 local SetCVarNative = (C_CVar and C_CVar.SetCVar) or SetCVar
 local ConsoleGetAllCommands = ConsoleGetAllCommands
     or (C_Console and C_Console.GetAllCommands)
 
 local pairs, ipairs = pairs, ipairs
 local type, tostring, tonumber = type, tostring, tonumber
-local pcall, select, unpack = pcall, select, unpack
+local pcall = pcall
 local floor, min, max, abs = math.floor, math.min, math.max, math.abs
 local format = string.format
-local insert, sort, concat = table.insert, table.sort, table.concat
+local sort, concat = table.sort, table.concat
 
 -- Physical pixels represented by one UI unit after scale compensation:
 -- pixel is per frame unit, drag is per cursor screen unit, snap is per
@@ -38,7 +33,6 @@ local SCALE = {
     snap = 1,
 }
 
-local WHITE_TEXTURE = "Interface\\Buttons\\WHITE8X8"
 local MEDIA_PATH = "Interface\\AddOns\\CVarBrowser\\Media\\"
 local FONT_REGULAR_PATH = MEDIA_PATH .. "NotoSans-Regular.ttf"
 local FONT_SEMIBOLD_PATH = MEDIA_PATH .. "NotoSans-SemiBold.ttf"
@@ -51,7 +45,6 @@ local LIST_TOP = 152
 local LIST_BOTTOM = 188
 local LIST_LEFT = 24
 local LIST_RIGHT = 48
-local LIST_BOTTOM = 188
 local LIST_WIDTH = FRAME_WIDTH - LIST_LEFT - LIST_RIGHT
 local LIST_HEIGHT = FRAME_HEIGHT - LIST_TOP - LIST_BOTTOM
 local DETAIL_WIDTH = FRAME_WIDTH - 48
@@ -250,8 +243,8 @@ local function make_text(parent, font, text, color)
 end
 
 local BACKDROP = {
-    bgFile = WHITE_TEXTURE,
-    edgeFile = WHITE_TEXTURE,
+    bgFile = "Interface\\Buttons\\WHITE8X8",
+    edgeFile = "Interface\\Buttons\\WHITE8X8",
     tile = false,
     edgeSize = 1,
     insets = { left = 0, right = 0, top = 0, bottom = 0 },
@@ -1324,7 +1317,7 @@ frame.filters = {
 frame.undo_stack = {}
 frame.redo_stack = {}
 apply_backdrop(frame, COLORS.background, COLORS.border)
-insert(UISpecialFrames, "CVarBrowserFrame")
+table.insert(UISpecialFrames, "CVarBrowserFrame")
 
 titlebar = CreateFrame("Frame", nil, frame)
 titlebar:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
@@ -1333,6 +1326,7 @@ titlebar:SetHeight(44)
 titlebar:EnableMouse(true)
 titlebar:RegisterForDrag("LeftButton")
 
+do
 local titlebar_border = snap_texture(titlebar:CreateTexture(nil, "ARTWORK"))
 titlebar_border:SetColorTexture(
     COLORS.border[1],
@@ -1365,6 +1359,7 @@ local subtitle = make_text(
 )
 subtitle:SetPoint("LEFT", title, "RIGHT", 12, 0)
 subtitle:SetJustifyV("MIDDLE")
+end
 
 scale_button = CreateFrame("Button", nil, titlebar)
 scale_button:SetSize(112, 24)
@@ -1529,6 +1524,7 @@ changed_box = CreateFrame("Frame", nil, changed_button)
 changed_box:SetSize(18, 18)
 changed_box:SetPoint("LEFT", changed_button, "LEFT", 0, 0)
 
+do
 local changed_box_background = snap_texture(changed_box:CreateTexture(nil, "BACKGROUND"))
 changed_box_background:SetAllPoints(changed_box)
 changed_box_background:SetColorTexture(
@@ -1537,6 +1533,7 @@ changed_box_background:SetColorTexture(
     COLORS.surface[3],
     1
 )
+end
 add_border(changed_box, COLORS.border)
 
 changed_tick = make_text(changed_box, FONT_CHECK, "✓", COLORS.accent)
@@ -2607,6 +2604,7 @@ local header = CreateFrame("Frame", nil, frame)
 header:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -132)
 header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -48, -132)
 header:SetHeight(16)
+do
 local header_border = snap_texture(header:CreateTexture(nil, "ARTWORK"))
 header_border:SetColorTexture(
     COLORS.border[1],
@@ -2627,6 +2625,7 @@ header_gauge:SetPoint("CENTER", header, "CENTER", 0, 1)
 local header_value = make_text(header, FONT_META, "Value", COLORS.muted)
 header_value:SetPoint("RIGHT", header, "RIGHT", -6, 1)
 header_value:SetJustifyH("RIGHT")
+end
 
 scroll_frame = CreateFrame("ScrollFrame", nil, frame)
 scroll_frame:SetPoint("TOPLEFT", frame, "TOPLEFT", LIST_LEFT, -LIST_TOP)
@@ -2760,6 +2759,7 @@ key = CreateFrame("Frame", nil, frame)
 key:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 24, 14)
 key:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -24, 14)
 key:SetHeight(20)
+do
 local key_border = snap_texture(key:CreateTexture(nil, "ARTWORK"))
 key_border:SetColorTexture(
     COLORS.border[1],
@@ -2770,6 +2770,7 @@ key_border:SetColorTexture(
 key_border:SetPoint("TOPLEFT", key, "TOPLEFT", 0, 0)
 key_border:SetPoint("TOPRIGHT", key, "TOPRIGHT", 0, 0)
 hairline.register(key_border, "height")
+end
 
 local changed_key = make_text(
     key,
