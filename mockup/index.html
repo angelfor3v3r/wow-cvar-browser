@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CVar Browser live mockup</title>
+  <link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+  <header class="lab">
+    <div class="lab-heading">
+      <h1>CVar Browser live mockup</h1>
+      <p>Instrument bench. Pick a palette, font, and text size.</p>
+    </div>
+
+    <div class="lab-controls">
+      <div class="control palette-control">
+        <span class="control-label">Palette</span>
+        <div class="palette-grid" id="palette-switch">
+          <button type="button" data-palette="void" class="palette">
+            <span class="palette-swatches">
+              <i style="--swatch:#0D0B14"></i><i style="--swatch:#161223"></i><i style="--swatch:#A8A3D4"></i><i style="--swatch:#5EEAD4"></i>
+            </span>
+            <span class="palette-name">Void amethyst</span>
+          </button>
+          <button type="button" data-palette="grim" class="palette active">
+            <span class="palette-swatches">
+              <i style="--swatch:#121114"></i><i style="--swatch:#1A181C"></i><i style="--swatch:#B7A3CC"></i><i style="--swatch:#68C3B9"></i>
+            </span>
+            <span class="palette-name">Grim plum</span>
+          </button>
+          <button type="button" data-palette="nebula" class="palette">
+            <span class="palette-swatches">
+              <i style="--swatch:#0A0812"></i><i style="--swatch:#130F22"></i><i style="--swatch:#ADA0D8"></i><i style="--swatch:#67E8F9"></i>
+            </span>
+            <span class="palette-name">Nebula</span>
+          </button>
+          <button type="button" data-palette="orchid" class="palette">
+            <span class="palette-swatches">
+              <i style="--swatch:#100916"></i><i style="--swatch:#191022"></i><i style="--swatch:#B98ACC"></i><i style="--swatch:#35D6C7"></i>
+            </span>
+            <span class="palette-name">Dark orchid</span>
+          </button>
+        </div>
+      </div>
+
+      <label class="control">
+        <span class="control-label">UI font</span>
+        <select id="font-select">
+          <option value="inter">Inter</option>
+          <option value="plex">IBM Plex Sans</option>
+          <option value="manrope">Manrope</option>
+          <option value="space">Space Grotesk</option>
+          <option value="noto" selected>Noto Sans</option>
+        </select>
+      </label>
+
+      <label class="control">
+        <span class="control-label">Data font</span>
+        <select id="data-select">
+          <option value="sans" selected>Same as UI</option>
+          <option value="mono">JetBrains Mono</option>
+        </select>
+      </label>
+
+      <div class="control">
+        <span class="control-label">Text size</span>
+        <div class="scale" id="scale-switch">
+          <button type="button" data-scale="13" class="active">13</button>
+          <button type="button" data-scale="14">14</button>
+          <button type="button" data-scale="15">15</button>
+          <button type="button" data-scale="16">16</button>
+        </div>
+      </div>
+
+      <label class="toggle"><input type="checkbox" id="grid-toggle"><span>8px grid</span></label>
+      <button type="button" id="reset" class="reset">Reset</button>
+    </div>
+
+    <div class="lab-scenarios" id="scenarios">
+      <span class="control-label">States</span>
+      <button type="button" data-scenario="filters">Active filters</button>
+      <button type="button" data-scenario="sort">Active sort</button>
+      <button type="button" data-scenario="undo">Undo &amp; redo disabled</button>
+      <button type="button" data-scenario="copy">Copy disabled</button>
+      <button type="button" data-scenario="default">Default</button>
+    </div>
+
+    <div class="selection" id="selection"></div>
+  </header>
+
+  <main class="stage">
+    <div class="app" id="app">
+      <div class="grid-overlay" aria-hidden="true"></div>
+
+      <header class="titlebar">
+        <span class="brand-bar"></span>
+        <div class="brand-text">
+          <h2>CVar Browser</h2>
+          <span>WoW Forever</span>
+        </div>
+        <div class="menu-anchor size-anchor">
+          <button type="button" class="size-menu" id="size-button" aria-haspopup="true" aria-expanded="false">Size: Auto</button>
+          <div class="popup align-right size-popup" id="size-menu" role="menu" hidden></div>
+        </div>
+        <button type="button" class="close" id="close" aria-label="Close">×</button>
+      </header>
+
+      <div class="toolbar">
+        <label class="search">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg>
+          <input id="search" type="text" placeholder="Search CVars" autocomplete="off" spellcheck="false">
+        </label>
+
+        <button type="button" class="chip regex-chip" id="regex-chip" aria-pressed="false" title="Treat the search as a regular expression">.*</button>
+
+        <label class="check">
+          <input type="checkbox" id="changed-only">
+          <span class="box"><span class="tick" aria-hidden="true"></span></span>
+          <span>Changed only</span>
+        </label>
+
+        <div class="count" id="count"></div>
+      </div>
+
+      <div class="toolbar-controls">
+        <div class="menu-anchor">
+          <button type="button" class="chip" id="filter-chip" aria-haspopup="true" aria-expanded="false">
+            <svg class="chip-icon" viewBox="0 0 10 9" aria-hidden="true"><path d="M0.83 1.5h8.34L6 4.65v2.55L4 7.95V4.65z"></path></svg>
+            Filters <span class="chip-count" id="filter-count">off</span>
+          </button>
+          <div class="popup filter-popup" id="filter-menu" role="menu" hidden></div>
+        </div>
+
+        <div class="menu-anchor">
+          <button type="button" class="chip" id="sort-chip" aria-haspopup="true" aria-expanded="false">
+            <svg class="chip-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1v10M3 11l-2.2-2.6M3 11l2.2-2.6M9 11V1M9 1L6.8 3.6M9 1l2.2 2.6"></path></svg>
+            Sort <span class="chip-count" id="sort-label">name</span>
+          </button>
+          <div class="popup sort-popup" id="sort-menu" role="menu" hidden></div>
+        </div>
+
+        <div class="history-controls" role="group" aria-label="History">
+          <button type="button" class="btn icon-btn" id="undo-button" title="Undo (Ctrl+Z)" aria-label="Undo">
+            <svg class="history-icon" viewBox="0 0 12 12" aria-hidden="true"><g transform="translate(.55 -.15)"><path d="M9 2.5v3a2.5 2.5 0 0 1-2.5 2.5H4.4"></path><path class="history-head" d="M4.8 6.2 1.9 8l2.9 1.8z"></path></g></svg>
+          </button>
+          <button type="button" class="btn icon-btn" id="redo-button" title="Redo (Ctrl+Y)" aria-label="Redo">
+            <svg class="history-icon" viewBox="0 0 12 12" aria-hidden="true"><g transform="translate(-.55 -.15)"><path d="M3 2.5v3a2.5 2.5 0 0 0 2.5 2.5h2.1"></path><path class="history-head" d="M7.2 6.2 10.1 8l-2.9 1.8z"></path></g></svg>
+          </button>
+        </div>
+
+        <div class="menu-anchor">
+          <button type="button" class="btn" id="copy-button" aria-haspopup="true" aria-expanded="false">Copy</button>
+          <div class="popup copy-popup" id="copy-menu" role="menu" hidden></div>
+        </div>
+
+      </div>
+
+      <div class="list-header" aria-hidden="true">
+        <span>CVar</span><span>Gauge</span><span>Value</span>
+      </div>
+
+      <div class="list-body">
+        <div class="rows-viewport" id="rows-viewport">
+          <div class="rows" id="rows"></div>
+        </div>
+        <div class="scrollbar" id="scrollbar" aria-hidden="true">
+          <span class="scrollbar-track"></span>
+          <span class="scrollbar-thumb" id="scrollbar-thumb"></span>
+        </div>
+      </div>
+
+      <div class="detail-separator"></div>
+
+      <section class="detail" id="detail">
+        <div class="detail-head">
+          <h3 id="detail-name"></h3>
+          <div class="detail-meta" id="detail-meta"></div>
+        </div>
+        <p class="detail-help" id="detail-help"></p>
+        <div class="detail-edit-row">
+          <label class="value-field"><input id="value-edit" type="text" autocomplete="off" spellcheck="false"></label>
+          <button type="button" class="btn" id="set-button">Set</button>
+          <button type="button" class="btn" id="reset-button">Reset to default</button>
+          <div class="status" id="status" role="status"></div>
+        </div>
+      </section>
+
+      <footer class="semantic-key">
+        <span class="key-item key-changed-label">Differs from default</span>
+        <span class="key-item"><i class="key-mark key-observed-ticks"></i>Observed bounds</span>
+        <span class="key-item"><i class="key-mark key-readonly"></i>Read-only</span>
+        <span class="key-item"><i class="key-mark key-current"></i>Current value</span>
+        <span class="key-hint">Slanted end <svg class="key-open-marks" viewBox="0 0 14 8" aria-hidden="true"><line x1="0" y1="4" x2="5" y2="0"></line><line x1="9" y1="0" x2="14" y2="4"></line></svg> means no limit. Dot <i class="key-dot"></i> means no known range.</span>
+      </footer>
+    </div>
+  </main>
+
+  <script src="mockup.js"></script>
+</body>
+</html>

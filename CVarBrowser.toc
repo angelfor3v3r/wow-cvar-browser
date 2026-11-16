@@ -1,0 +1,12 @@
+## Interface: 11509, 16001
+## Title: CVar Browser
+## Notes: Search, inspect, edit, and reset every console variable exposed by the client.
+## Author: Dexxi (angelfor3v3r)
+## Version: 2.1.0
+## SavedVariables: CVarBrowserDB
+## IconTexture: Interface\Icons\INV_Misc_Spyglass_02
+## AddonCompartmentFunc: CVarBrowser_OnAddonCompartmentClick
+## AddonCompartmentFuncOnEnter: CVarBrowser_OnAddonCompartmentEnter
+## AddonCompartmentFuncOnLeave: CVarBrowser_OnAddonCompartmentLeave
+
+CVarBrowser.lua
