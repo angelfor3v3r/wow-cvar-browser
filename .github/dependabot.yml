@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Bumps the SHA-pinned actions in .github/workflows and keeps the
+  # "# vX.Y.Z" comments in sync. The cooldown skips releases younger than a
+  # week, so a hijacked action release has time to be caught and pulled.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
