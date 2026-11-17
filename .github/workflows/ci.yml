@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lua5.1
+
+      - name: Syntax check
+        run: luac5.1 -p CVarBrowser.lua tests/harness.lua
+
+      - name: Stub harness
+        env:
+          LUAC: luac5.1
+        run: lua5.1 tests/harness.lua
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate tag
+        run: |
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH[-pre]"
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          root="dist/CVarBrowser"
+          mkdir -p "$root/Media"
+          cp CVarBrowser.lua README.md "$root/"
+          # Stamp the tag's version into the shipped TOC.
+          sed "s/^## Version:.*/## Version: $version/" CVarBrowser.toc > "$root/CVarBrowser.toc"
+          # Ship only the fonts the addon loads (MEDIA_PATH .. "<file>").
+          fonts=$(grep -o 'MEDIA_PATH \.\. "[^"]*"' CVarBrowser.lua | sed 's/.*"\(.*\)"/\1/' | sort -u)
+          test -n "$fonts"
+          for font in $fonts; do
+            cp "Media/$font" "$root/Media/"
+          done
+          (cd dist && zip -r -X "CVarBrowser-$version.zip" CVarBrowser)
+          unzip -l "dist/CVarBrowser-$version.zip"
+          echo "ZIP=dist/CVarBrowser-$version.zip" >> "$GITHUB_ENV"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" "$ZIP" \
+            --verify-tag \
+            --title "CVar Browser $GITHUB_REF_NAME" \
+            --generate-notes \
+            "${prerelease[@]}"

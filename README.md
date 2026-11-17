@@ -71,3 +71,12 @@ The client exposes no public table of CVar min/max bounds. `C_Console` help text
 `DESIGN.md` records the final visual specification.
 
 `lua tests/harness.lua` (Lua 5.1, run from this folder) loads the addon against headless WoW API stubs and checks load, scan, set/clamp/reset, undo/redo, read-only and in-combat secure selection, slash commands, copy, pattern search, smooth scrolling, the pixel-locked drag, and main-chunk register headroom. It exits non-zero on failure. Visual pixel checks still need an in-game `/reload`.
+
+CI (`.github/workflows/ci.yml`) runs `luac -p` and the harness on every push and pull request. To cut a release, push a tag:
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The tag must look like `vMAJOR.MINOR.PATCH` (an optional `-suffix` marks a pre-release). After the tests pass, CI stamps the version into the TOC and attaches `CVarBrowser-<version>.zip` to a GitHub release with generated notes. The zip contains one `CVarBrowser/` folder with the TOC, `CVarBrowser.lua`, `README.md`, and only the fonts the addon loads from `Media/`.

@@ -586,16 +586,22 @@ end
 
 -- Main-chunk register headroom (Lua 5.1 caps active locals at 200) -----------
 
-local listing = io.popen('luac -l -l -p "' .. addon_path .. '" 2>&1')
+-- LUAC names the Lua 5.1 compiler (CI sets LUAC=luac5.1). When it is set
+-- explicitly the register check is mandatory; otherwise a missing luac only
+-- skips it.
+local luac = os.getenv("LUAC")
+local listing = io.popen((luac or "luac") .. ' -l -l -p "' .. addon_path .. '" 2>&1')
+local slots
 if listing then
-    local output = listing:read("*a")
+    slots = tonumber(listing:read("*a"):match("main <.-\n[^\n]-(%d+) slots"))
     listing:close()
-    local slots = tonumber(output:match("main <.-\n[^\n]-(%d+) slots"))
-    if slots then
-        check(slots < 190, "main chunk uses " .. slots .. " of 200 register slots")
-    else
-        io.stderr:write("note: luac not available; skipped register check\n")
-    end
+end
+if slots then
+    check(slots < 190, "main chunk uses " .. slots .. " of 200 register slots")
+elseif luac then
+    check(false, "register check: could not run " .. luac)
+else
+    io.stderr:write("note: luac not available; skipped register check\n")
 end
 
 print(string.format("%d checks, %d failed", checks, failures))
