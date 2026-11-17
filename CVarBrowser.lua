@@ -1,4 +1,4 @@
-local addon_name = ...
+local g_addon_name = ...
 
 -- Localized WoW APIs ---------------------------------------------------------
 
@@ -7,15 +7,11 @@ local UIParent = UIParent
 local InCombatLockdown = InCombatLockdown
 local GetCursorPosition = GetCursorPosition
 local GetPhysicalScreenSize = GetPhysicalScreenSize
-local GetCVarInfo = GetCVarInfo
-    or (C_CVar and C_CVar.GetCVarInfo)
-local GetCVar = GetCVar or (C_CVar and C_CVar.GetCVar)
-local GetCVarDefault = GetCVarDefault
-    or (C_CVar and C_CVar.GetCVarDefault)
+local GetCVarInfo = (C_CVar and C_CVar.GetCVarInfo) or GetCVarInfo
+local GetCVar = (C_CVar and C_CVar.GetCVar) or GetCVar
+local GetCVarDefault = (C_CVar and C_CVar.GetCVarDefault) or GetCVarDefault
 local SetCVarNative = (C_CVar and C_CVar.SetCVar) or SetCVar
-local ConsoleGetAllCommands = ConsoleGetAllCommands
-    or (C_Console and C_Console.GetAllCommands)
-
+local ConsoleGetAllCommands = (C_Console and C_Console.GetAllCommands) or ConsoleGetAllCommands
 local pairs, ipairs = pairs, ipairs
 local type, tostring, tonumber = type, tostring, tonumber
 local pcall = pcall
@@ -23,35 +19,40 @@ local floor, min, max, abs = math.floor, math.min, math.max, math.abs
 local format = string.format
 local sort, concat = table.sort, table.concat
 
--- Physical pixels represented by one UI unit after scale compensation:
--- pixel is per frame unit, drag is per cursor screen unit, snap is per
--- anchor offset unit. Cursor screen units convert to frame units by
--- dividing by the region's effective scale, never by these values.
+-- Physical pixels represented by one frame unit after scale compensation
+-- (~1.0). Anchor offsets on the frame are in the same frame units. Cursor
+-- screen units convert to frame units by dividing by the region's
+-- effective scale, never by this value.
 local SCALE = {
     pixel = 1,
-    drag = 1,
-    snap = 1,
 }
 
 local MEDIA_PATH = "Interface\\AddOns\\CVarBrowser\\Media\\"
 local FONT_REGULAR_PATH = MEDIA_PATH .. "NotoSans-Regular.ttf"
 local FONT_SEMIBOLD_PATH = MEDIA_PATH .. "NotoSans-SemiBold.ttf"
-
-local FRAME_WIDTH = 920
-local FRAME_HEIGHT = 680
+-- Mutable layout metrics; apply_ui_scale rewrites the derived widths per
+-- preset. Grouped in one table to keep main-chunk locals under the cap.
+local METRICS = {
+    frame_width = 920,
+    frame_height = 680,
+    list_top = 152,
+    list_bottom = 188,
+    list_left = 24,
+    list_right = 48,
+    gauge_height = 8,
+}
+METRICS.list_width = METRICS.frame_width - METRICS.list_left - METRICS.list_right
+METRICS.list_height = METRICS.frame_height - METRICS.list_top - METRICS.list_bottom
+METRICS.detail_width = METRICS.frame_width - 48
 local ROW_HEIGHT = 22
-local ROW_COUNT = 18
-local LIST_TOP = 152
-local LIST_BOTTOM = 188
-local LIST_LEFT = 24
-local LIST_RIGHT = 48
-local LIST_WIDTH = FRAME_WIDTH - LIST_LEFT - LIST_RIGHT
-local LIST_HEIGHT = FRAME_HEIGHT - LIST_TOP - LIST_BOTTOM
-local DETAIL_WIDTH = FRAME_WIDTH - 48
+-- Enough pooled rows to cover the tallest preset list (Large: 404px)
+-- plus one partially visible row at each edge: ceil(404 / 22) + 1.
+local ROW_COUNT = 20
 local GAUGE_WIDTH = 88
-local GAUGE_HEIGHT = 8
-local META_MAX_PARTS = 6
-
+-- build_meta_parts can emit up to 8 parts (scope, category, type, default,
+-- observed, help range, read-only/locked, secure); never drop the secure
+-- warning.
+local META_MAX_PARTS = 8
 local COLORS = {
     background = { 0.070588, 0.066667, 0.078431 },
     surface = { 0.101961, 0.094118, 0.109804 },
@@ -67,7 +68,6 @@ local COLORS = {
     error = { 0.878431, 0.415686, 0.447059 },
     changed = { 0.823529, 0.749020, 0.901961 },
 }
-
 local CATEGORY_NAMES = {
     [0] = "Debug",
     [1] = "Graphics",
@@ -81,11 +81,9 @@ local CATEGORY_NAMES = {
     [9] = "Reveal",
     [10] = "None",
 }
-
 local BITFIELD_CVARS = {
     closedInfoFrames = true,
 }
-
 local DB_DEFAULTS = {
     point = "CENTER",
     relativePoint = "CENTER",
@@ -94,8 +92,8 @@ local DB_DEFAULTS = {
     preset = "auto",
     minimap_angle = 220,
     minimap_hidden = false,
+    smooth_scroll = true,
 }
-
 local LAYOUT_PRESETS = {
     compact = {
         width = 800,
@@ -128,7 +126,6 @@ local LAYOUT_PRESETS = {
         check = 16,
     },
 }
-
 local LAYOUT_OPTIONS = {
     { value = "auto", label = "Auto" },
     { value = "compact", label = "Compact" },
@@ -138,18 +135,16 @@ local LAYOUT_OPTIONS = {
 
 -- Fonts ----------------------------------------------------------------------
 
-local function create_font(name, path, size)
-    local font = CreateFont(name)
-    local ok = pcall(
-        font.SetFont,
-        font,
-        path,
-        size,
-        ""
-    )
+local function resize_font(font, path, size)
+    local ok = pcall(font.SetFont, font, path, size, "")
     if not ok then
         font:SetFont(STANDARD_TEXT_FONT, size, "")
     end
+end
+
+local function create_font(name, path, size)
+    local font = CreateFont(name)
+    resize_font(font, path, size)
     return font
 end
 
@@ -157,18 +152,7 @@ local FONT_TITLE = create_font("CVarBrowserTitle20", FONT_SEMIBOLD_PATH, 20)
 local FONT_DETAIL = create_font("CVarBrowserDetail15", FONT_SEMIBOLD_PATH, 15)
 local FONT_BODY = create_font("CVarBrowserBody13", FONT_REGULAR_PATH, 13)
 local FONT_META = create_font("CVarBrowserMeta11", FONT_REGULAR_PATH, 11)
-local FONT_CHECK = create_font(
-    "CVarBrowserCheck14",
-    MEDIA_PATH .. "Inter-SemiBold.ttf",
-    14
-)
-
-local function resize_font(font, path, size)
-    local ok = pcall(font.SetFont, font, path, size, "")
-    if not ok then
-        font:SetFont(STANDARD_TEXT_FONT, size, "")
-    end
-end
+local FONT_CHECK = create_font("CVarBrowserCheck14", MEDIA_PATH .. "Inter-SemiBold.ttf", 14)
 
 -- Small helpers --------------------------------------------------------------
 
@@ -185,18 +169,19 @@ local function clamp(value, low, high)
     return value
 end
 
-local function snap(value)
+-- Round half up to the nearest integer. floor keeps negatives correct
+-- (-2.6 -> -3), unlike C-style (int)(x + 0.5) truncation toward zero.
+local function round(value)
     return floor(value + 0.5)
 end
 
-local function color_escape(color)
-    return format(
-        "|cff%02x%02x%02x",
-        floor(color[1] * 255 + 0.5),
-        floor(color[2] * 255 + 0.5),
-        floor(color[3] * 255 + 0.5)
-    )
-end
+-- Inline color escape for the muted "(Default: ...)" suffix in rows.
+local MUTED_ESCAPE = format(
+    "|cff%02x%02x%02x",
+    round(COLORS.muted[1] * 255),
+    round(COLORS.muted[2] * 255),
+    round(COLORS.muted[3] * 255)
+)
 
 local function bitfield_to_hex(value)
     return (tostring(value or ""):gsub(".", function(character)
@@ -250,42 +235,22 @@ local BACKDROP = {
     insets = { left = 0, right = 0, top = 0, bottom = 0 },
 }
 
--- Backdrop borders are sized in region units. edgeSize must be 1/px_per_unit
--- region units (px_per_unit = physical px per region unit = effective scale) so
--- the border is exactly one physical pixel. A fixed edgeSize of 1 renders half a
--- physical pixel at fractional scale (rounds to 0 or 2px). apply_ui_scale calls
--- set_backdrop_edge_size to re-apply on scale change.
-local backdrop_frames = {}
-
-local function set_backdrop_edge_size(px_per_unit)
-    if not px_per_unit or px_per_unit <= 0 then
-        px_per_unit = 1
-    end
-    local edge = 1 / px_per_unit
-    for _, bframe in ipairs(backdrop_frames) do
-        if bframe.SetBackdropBorderSize then
-            bframe:SetBackdropBorderSize(edge)
-        end
-    end
-end
-
-local function apply_backdrop(frame, background, border)
-    frame:SetBackdrop(BACKDROP)
+local function apply_backdrop(target, background, border)
+    target:SetBackdrop(BACKDROP)
     if background then
-        frame:SetBackdropColor(
+        target:SetBackdropColor(
             background[1],
             background[2],
             background[3],
             background[4] or 1
         )
     else
-        frame:SetBackdropColor(0, 0, 0, 0)
+        target:SetBackdropColor(0, 0, 0, 0)
     end
-    frame:SetBackdropBorderColor(border[1], border[2], border[3], border[4] or 1)
-    backdrop_frames[#backdrop_frames + 1] = frame
-    -- Border size is set to one physical pixel by set_backdrop_edge_size at
-    -- layout (it has the measured px-per-region-unit); the initial BACKDROP
-    -- edgeSize of 1 is only a placeholder until then.
+    target:SetBackdropBorderColor(border[1], border[2], border[3], border[4] or 1)
+    -- edgeSize 1 is one physical pixel because one frame unit is about one
+    -- physical pixel (SCALE.pixel ~ 1); BackdropTemplateMixin has no
+    -- border-size setter to compensate further.
 end
 
 local function snap_texture(texture)
@@ -298,10 +263,10 @@ local function snap_texture(texture)
     return texture
 end
 
-local hairline = { items = {}, scale = 1 }
+local g_hairline = { items = {}, scale = 1 }
 
-function hairline.set_size(item)
-    local thickness = 1 / hairline.scale
+function g_hairline.set_size(item)
+    local thickness = 1 / g_hairline.scale
     if item.axis == "height" then
         item.texture:SetHeight(thickness)
     elseif item.axis == "width" then
@@ -322,53 +287,53 @@ function hairline.set_size(item)
     end
 end
 
-function hairline.register(texture, axis, frame)
-    local item = { texture = texture, axis = axis, frame = frame }
-    hairline.items[#hairline.items + 1] = item
-    hairline.set_size(item)
+function g_hairline.register(texture, axis, owner)
+    local item = { texture = texture, axis = axis, frame = owner }
+    g_hairline.items[#g_hairline.items + 1] = item
+    g_hairline.set_size(item)
     return texture
 end
 
-function hairline.set_scale(scale)
+function g_hairline.set_scale(scale)
     if not scale or scale <= 0 then
         scale = 1
     end
-    hairline.scale = scale
-    for _, item in ipairs(hairline.items) do
-        hairline.set_size(item)
+    g_hairline.scale = scale
+    for _, item in ipairs(g_hairline.items) do
+        g_hairline.set_size(item)
     end
 end
 
-function hairline.set_color(borders, color)
+function g_hairline.set_color(borders, color)
     for _, texture in ipairs(borders) do
         texture:SetColorTexture(color[1], color[2], color[3], 1)
     end
 end
 
-local function add_border(frame, color)
+local function add_border(target, color)
     -- Horizontal edges span the full width and own the corners; vertical edges
     -- are inset by the border thickness (handled by hairline's border-v axes) so
     -- edges butt together without overlapping. Overlapping opaque corner
     -- textures double the opacity there (visible on the undo/redo buttons).
-    local top = snap_texture(frame:CreateTexture(nil, "BORDER"))
+    local top = snap_texture(target:CreateTexture(nil, "BORDER"))
     top:SetColorTexture(color[1], color[2], color[3], 1)
-    top:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-    top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
-    hairline.register(top, "height", frame)
+    top:SetPoint("TOPLEFT", target, "TOPLEFT", 0, 0)
+    top:SetPoint("TOPRIGHT", target, "TOPRIGHT", 0, 0)
+    g_hairline.register(top, "height", target)
 
-    local bottom = snap_texture(frame:CreateTexture(nil, "BORDER"))
+    local bottom = snap_texture(target:CreateTexture(nil, "BORDER"))
     bottom:SetColorTexture(color[1], color[2], color[3], 1)
-    bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
-    bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
-    hairline.register(bottom, "height", frame)
+    bottom:SetPoint("BOTTOMLEFT", target, "BOTTOMLEFT", 0, 0)
+    bottom:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", 0, 0)
+    g_hairline.register(bottom, "height", target)
 
-    local left = snap_texture(frame:CreateTexture(nil, "BORDER"))
+    local left = snap_texture(target:CreateTexture(nil, "BORDER"))
     left:SetColorTexture(color[1], color[2], color[3], 1)
-    hairline.register(left, "border-v", frame)
+    g_hairline.register(left, "border-v", target)
 
-    local right = snap_texture(frame:CreateTexture(nil, "BORDER"))
+    local right = snap_texture(target:CreateTexture(nil, "BORDER"))
     right:SetColorTexture(color[1], color[2], color[3], 1)
-    hairline.register(right, "border-vr", frame)
+    g_hairline.register(right, "border-vr", target)
     return { top, bottom, left, right }
 end
 
@@ -426,44 +391,13 @@ local function create_button(parent, label, width, height)
     return button
 end
 
-local function create_slant_text(parent, text, x, y)
-    local label = make_text(parent, FONT_META, text, COLORS.muted)
-    label:SetAlpha(0.8)
-    label:SetPoint("CENTER", parent, "LEFT", x, y or 0)
-    return label
-end
-
-local function create_slant_marks(parent)
-    local marks = CreateFrame("Frame", nil, parent)
-    marks:SetSize(14, 8)
-    marks.left = make_text(marks, FONT_META, "/", COLORS.muted)
-    marks.left:SetAlpha(0.8)
-    marks.left:SetPoint("CENTER", marks, "LEFT", 3, 0)
-    marks.right = make_text(marks, FONT_META, "\\", COLORS.muted)
-    marks.right:SetAlpha(0.8)
-    marks.right:SetPoint("CENTER", marks, "LEFT", 11, 0)
-    return marks
-end
-
-local function create_dot(parent)
-    local dot = snap_texture(parent:CreateTexture(nil, "ARTWORK"))
-    dot:SetColorTexture(
-        COLORS.dot[1],
-        COLORS.dot[2],
-        COLORS.dot[3],
-        1
-    )
-    dot:SetSize(2, 2)
-    return dot
-end
-
 -- Data / range helpers -------------------------------------------------------
 
-local entries = {}
-local by_name = {}
-local view = {}
-local selected = nil
-local db = nil
+local g_entries = {}
+local g_by_name = {}
+local g_view = {}
+local g_selected = nil
+local g_db = nil
 
 local RANGE_NUMBER = "[%+%-]?%d[%d,]*%.?%d*"
 
@@ -674,7 +608,7 @@ local function format_observed_evidence(observed)
 end
 
 local function apply_range(entry)
-    local observed = db and db.observed and db.observed[entry.name]
+    local observed = g_db and g_db.observed and g_db.observed[entry.name]
     entry.observed = observed
     local observed_text = format_observed_range(observed)
     if observed_text then
@@ -694,26 +628,18 @@ local function read_cvar_value(entry)
     local secure
     local readonly
 
+    local info_first
     if GetCVarInfo then
-        local count_ok, count = pcall(function()
-            return select("#", GetCVarInfo(entry.name))
-        end)
-        local ok, _, returned_default, account_wide, per_character, c, d, e =
+        local ok, first, returned_default, account_wide, per_character, c, d, e =
             pcall(GetCVarInfo, entry.name)
-        if count_ok and ok then
+        if ok and first ~= nil then
+            info_first = first
             default_value = returned_default
-            if count >= 7 then
-                scope = account_wide and "Account"
-                    or (per_character and "Character" or "Local")
-                locked = c
-                secure = d
-                readonly = e
-            elseif count >= 4 then
-                scope = account_wide and "Account"
-                    or (per_character and "Character" or "Local")
-            elseif count >= 3 then
-                scope = account_wide and "Account" or "Local"
-            end
+            scope = account_wide and "Account"
+                or (per_character and "Character" or "Local")
+            locked = c
+            secure = d
+            readonly = e
         end
     end
 
@@ -724,17 +650,10 @@ local function read_cvar_value(entry)
         end
     end
 
-    -- Fallback for clients whose GetCVar is absent but GetCVarInfo returns a
-    -- value first. On the documented API the first return is the canonical
-    -- name, so never use it when it matches the requested name.
-    if value == nil and GetCVarInfo then
-        local ok, first, fallback_default = pcall(GetCVarInfo, entry.name)
-        if ok and first ~= entry.name then
-            value = first
-        end
-        if default_value == nil then
-            default_value = fallback_default
-        end
+    -- GetCVarInfo's first return is the value too (verified in game); use
+    -- it if GetCVar is unavailable or returned nothing.
+    if value == nil then
+        value = info_first
     end
 
     if default_value == nil and GetCVarDefault then
@@ -785,7 +704,7 @@ local function is_cvar_entry(info)
 end
 
 local function record_observed_bound(entry, requested_text, previous_text)
-    if not db or type(db.observed) ~= "table" then
+    if not g_db or type(g_db.observed) ~= "table" then
         return false
     end
     local requested = tonumber(requested_text)
@@ -812,10 +731,10 @@ local function record_observed_bound(entry, requested_text, previous_text)
         end
     end
 
-    local observed = db.observed[entry.name]
+    local observed = g_db.observed[entry.name]
     if type(observed) ~= "table" then
         observed = {}
-        db.observed[entry.name] = observed
+        g_db.observed[entry.name] = observed
     end
 
     if requested > actual then
@@ -950,14 +869,14 @@ local function init_db()
     if type(CVarBrowserDB) ~= "table" then
         CVarBrowserDB = {}
     end
-    db = CVarBrowserDB
-    for key, value in pairs(DB_DEFAULTS) do
-        if db[key] == nil then
-            db[key] = value
+    g_db = CVarBrowserDB
+    for default_key, value in pairs(DB_DEFAULTS) do
+        if g_db[default_key] == nil then
+            g_db[default_key] = value
         end
     end
-    if type(db.observed) ~= "table" then
-        db.observed = {}
+    if type(g_db.observed) ~= "table" then
+        g_db.observed = {}
     end
 
     local observed_key_map = {
@@ -968,7 +887,7 @@ local function init_db()
         minPrevious = "min_previous",
         minSeen = "min_seen",
     }
-    for _, observed in pairs(db.observed) do
+    for _, observed in pairs(g_db.observed) do
         if type(observed) == "table" then
             for old_key, new_key in pairs(observed_key_map) do
                 if observed[old_key] ~= nil and observed[new_key] == nil then
@@ -988,357 +907,124 @@ end
 
 -- UI objects -----------------------------------------------------------------
 
-local frame
-local titlebar
-local close_button
-local scale_button
-local scale_popup
-local scale_rows = {}
-local search_frame
-local search_box
-local search_placeholder
-local changed_button
-local changed_box
-local changed_tick
-local changed_label
-local count_text
-local scroll_frame
-local scroll_child
-local scrollbar
-local scrollbar_track
-local scrollbar_thumb
-local rows = {}
-local detail
-local detail_name
-local detail_meta
-local detail_meta_parts = {}
-local detail_meta_separators = {}
-local detail_help
-local detail_edit_frame
-local detail_edit
-local set_button
-local reset_button
-local detail_status
-local key
-local hint
-local scroll_drag
-
-local function create_gauge(parent)
-    local gauge = CreateFrame("Frame", nil, parent)
-    gauge:SetSize(GAUGE_WIDTH, GAUGE_HEIGHT)
-
-    local track = snap_texture(gauge:CreateTexture(nil, "ARTWORK"))
-    track:SetColorTexture(
-        COLORS.border[1],
-        COLORS.border[2],
-        COLORS.border[3],
-        1
-    )
-    track:SetHeight(1)
-    track:SetPoint("LEFT", gauge, "LEFT", 0, 0)
-    track:SetPoint("RIGHT", gauge, "RIGHT", 0, 0)
-
-    local function make_mark(width, height, color)
-        local mark = snap_texture(gauge:CreateTexture(nil, "ARTWORK"))
-        mark:SetColorTexture(color[1], color[2], color[3], 1)
-        mark:SetSize(width, height)
-        mark:Hide()
-        return mark
-    end
-
-    local help_min = make_mark(1, 3, COLORS.muted)
-    local help_max = make_mark(1, 3, COLORS.muted)
-    local observed_min = make_mark(1, 6, COLORS.observed)
-    local observed_max = make_mark(1, 6, COLORS.observed)
-    local cursor = make_mark(2, 8, COLORS.text)
-    local clamp_mark = make_mark(2, 8, COLORS.warning)
-    local dot = make_mark(2, 2, COLORS.dot)
-    dot:SetPoint("CENTER", gauge, "CENTER", 0, 0)
-
-    local open_left = create_slant_text(gauge, "/", 0, 0)
-    local open_right = create_slant_text(gauge, "\\", GAUGE_WIDTH, 0)
-    open_left:Hide()
-    open_right:Hide()
-
-    return {
-        frame = gauge,
-        track = track,
-        help_min = help_min,
-        help_max = help_max,
-        observed_min = observed_min,
-        observed_max = observed_max,
-        cursor = cursor,
-        clamp = clamp_mark,
-        dot = dot,
-        open_left = open_left,
-        open_right = open_right,
-    }
-end
-
-local function create_row()
-    local row = CreateFrame("Button", nil, scroll_child)
-    row:SetHeight(ROW_HEIGHT)
-    row:EnableMouse(true)
-
-    local hover = snap_texture(row:CreateTexture(nil, "BACKGROUND"))
-    hover:SetAllPoints(row)
-    hover:SetColorTexture(
-        COLORS.hover[1],
-        COLORS.hover[2],
-        COLORS.hover[3],
-        1
-    )
-    hover:Hide()
-
-    local selected_background = snap_texture(row:CreateTexture(nil, "BACKGROUND"))
-    selected_background:SetAllPoints(row)
-    selected_background:SetColorTexture(
-        COLORS.accent[1],
-        COLORS.accent[2],
-        COLORS.accent[3],
-        0.14
-    )
-    selected_background:Hide()
-
-    local selected_bar = snap_texture(row:CreateTexture(nil, "ARTWORK"))
-    selected_bar:SetColorTexture(
-        COLORS.accent[1],
-        COLORS.accent[2],
-        COLORS.accent[3],
-        1
-    )
-    selected_bar:SetWidth(2)
-    selected_bar:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
-    selected_bar:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
-    selected_bar:Hide()
-
-    local name_text = make_text(row, FONT_BODY, "", COLORS.text)
-    name_text:SetPoint("LEFT", row, "LEFT", 6, 0)
-    name_text:SetWidth(300)
-    name_text:SetJustifyH("LEFT")
-    name_text:SetWordWrap(false)
-
-    local gauge = create_gauge(row)
-    gauge.frame:SetPoint("CENTER", row, "CENTER", 0, 0)
-
-    local value_text = make_text(row, FONT_BODY, "", COLORS.text)
-    value_text:SetPoint("RIGHT", row, "RIGHT", -6, 0)
-    value_text:SetWidth(300)
-    value_text:SetJustifyH("RIGHT")
-    value_text:SetWordWrap(false)
-
-    row.hover = hover
-    row.selected_background = selected_background
-    row.selected_bar = selected_bar
-    row.name_text = name_text
-    row.value_text = value_text
-    row.gauge = gauge
-    return row
-end
-
-local function create_meta_part(parent)
-    local part = make_text(parent, FONT_META, "", COLORS.muted)
-    part:SetWordWrap(false)
-    part:Hide()
-    return part
-end
-
-local function create_meta_separator(parent)
-    local separator = snap_texture(parent:CreateTexture(nil, "ARTWORK"))
-    separator:SetColorTexture(
-        COLORS.border[1],
-        COLORS.border[2],
-        COLORS.border[3],
-        0.7
-    )
-    hairline.register(separator, "width")
-    separator:SetHeight(11)
-    separator:Hide()
-    return separator
-end
-
-local function create_readonly_mark(parent)
-    local mark = CreateFrame("Frame", nil, parent)
-    mark:SetSize(9, 9)
-    -- Full-span outline: the left/right lines run the mark's full height
-    -- and the top/bottom lines its full width, so both draw each corner
-    -- (solid color; the overlap is invisible). add_border's butt joints,
-    -- with the vertical lines inset by their 1px thickness, left this
-    -- small box's side lines 1px short in-game.
-    local top = snap_texture(mark:CreateTexture(nil, "BORDER"))
-    top:SetColorTexture(
-        COLORS.muted[1],
-        COLORS.muted[2],
-        COLORS.muted[3],
-        1
-    )
-    top:SetPoint("TOPLEFT", mark, "TOPLEFT", 0, 0)
-    top:SetPoint("TOPRIGHT", mark, "TOPRIGHT", 0, 0)
-    hairline.register(top, "height", mark)
-
-    local bottom = snap_texture(mark:CreateTexture(nil, "BORDER"))
-    bottom:SetColorTexture(
-        COLORS.muted[1],
-        COLORS.muted[2],
-        COLORS.muted[3],
-        1
-    )
-    bottom:SetPoint("BOTTOMLEFT", mark, "BOTTOMLEFT", 0, 0)
-    bottom:SetPoint("BOTTOMRIGHT", mark, "BOTTOMRIGHT", 0, 0)
-    hairline.register(bottom, "height", mark)
-
-    local left = snap_texture(mark:CreateTexture(nil, "BORDER"))
-    left:SetColorTexture(
-        COLORS.muted[1],
-        COLORS.muted[2],
-        COLORS.muted[3],
-        1
-    )
-    left:SetPoint("TOPLEFT", mark, "TOPLEFT", 0, 0)
-    left:SetPoint("BOTTOMLEFT", mark, "BOTTOMLEFT", 0, 0)
-    hairline.register(left, "width", mark)
-
-    local right = snap_texture(mark:CreateTexture(nil, "BORDER"))
-    right:SetColorTexture(
-        COLORS.muted[1],
-        COLORS.muted[2],
-        COLORS.muted[3],
-        1
-    )
-    right:SetPoint("TOPRIGHT", mark, "TOPRIGHT", 0, 0)
-    right:SetPoint("BOTTOMRIGHT", mark, "BOTTOMRIGHT", 0, 0)
-    hairline.register(right, "width", mark)
-    return mark
-end
-
-local function create_observed_ticks(parent)
-    local mark = CreateFrame("Frame", nil, parent)
-    mark:SetSize(12, 8)
-    local first = mark:CreateTexture(nil, "ARTWORK")
-    first:SetColorTexture(
-        COLORS.observed[1],
-        COLORS.observed[2],
-        COLORS.observed[3],
-        1
-    )
-    first:SetSize(1, 6)
-    first:SetPoint("LEFT", mark, "LEFT", 0, 0)
-    local second = mark:CreateTexture(nil, "ARTWORK")
-    second:SetColorTexture(
-        COLORS.observed[1],
-        COLORS.observed[2],
-        COLORS.observed[3],
-        1
-    )
-    second:SetSize(1, 6)
-    second:SetPoint("LEFT", mark, "LEFT", 10, 0)
-    return mark
-end
-
-local function create_current_mark(parent)
-    local mark = CreateFrame("Frame", nil, parent)
-    mark:SetSize(2, 8)
-    local line = mark:CreateTexture(nil, "ARTWORK")
-    line:SetAllPoints(mark)
-    line:SetColorTexture(
-        COLORS.text[1],
-        COLORS.text[2],
-        COLORS.text[3],
-        1
-    )
-    return mark
-end
-
--- Flow layout of the hint marks: 4px margins on both sides of the slant
--- group and the dot (the mockup's .key-dot margin). Re-run after font
--- resizes so measured advances never drift from rendered text.
-local function layout_hint(hint_frame)
-    local x = 0
-    hint_frame.first:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
-    x = snap(x + hint_frame.first:GetStringWidth()) + 4
-    hint_frame.slants:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
-    x = snap(x + 14) + 4
-    hint_frame.second:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
-    x = snap(x + hint_frame.second:GetStringWidth()) + 4
-    hint_frame.dot:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
-    x = snap(x + 2) + 4
-    hint_frame.third:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
-    x = snap(x + hint_frame.third:GetStringWidth())
-    hint_frame:SetWidth(x)
-end
-
-local function create_hint(parent)
-    local hint_frame = CreateFrame("Frame", nil, parent)
-    hint_frame:SetHeight(20)
-    hint_frame.first = make_text(
-        hint_frame,
-        FONT_META,
-        "Slanted end",
-        COLORS.muted
-    )
-    hint_frame.slants = create_slant_marks(hint_frame)
-    hint_frame.second = make_text(
-        hint_frame,
-        FONT_META,
-        "means no limit. Dot",
-        COLORS.muted
-    )
-    hint_frame.dot = create_dot(hint_frame)
-    hint_frame.third = make_text(
-        hint_frame,
-        FONT_META,
-        "means no known range.",
-        COLORS.muted
-    )
-    hint_frame:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
-    layout_hint(hint_frame)
-    return hint_frame
-end
+local g_frame
+local g_titlebar
+local g_close_button
+local g_scale_button
+local g_scale_popup
+local g_scale_rows = {}
+local g_search_frame
+local g_search_box
+local g_search_placeholder
+local g_changed_button
+local g_changed_box
+local g_changed_tick
+local g_count_text
+local g_scroll_frame
+local g_scroll_child
+local g_scrollbar
+local g_scrollbar_thumb
+local g_rows = {}
+local g_detail
+local g_detail_name
+local g_detail_meta
+local g_detail_meta_parts = {}
+local g_detail_meta_separators = {}
+local g_detail_help
+local g_detail_edit_frame
+local g_detail_edit
+local g_set_button
+local g_reset_button
+local g_detail_status
+local g_key
+local g_scroll_drag
 
 -- Root UI --------------------------------------------------------------------
 
-frame = CreateFrame("Frame", "CVarBrowserFrame", UIParent, "BackdropTemplate")
-frame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
-frame:SetPoint("CENTER")
-frame:SetFrameStrata("DIALOG")
-frame:SetMovable(true)
-frame:SetClampedToScreen(true)
-frame:EnableMouse(true)
-frame:Hide()
-frame.regex_enabled = false
-frame.sort_key = "name"
-frame.sort_dir = "asc"
-frame.filters = {
+g_frame = CreateFrame("Frame", "CVarBrowserFrame", UIParent, "BackdropTemplate")
+g_frame:SetSize(METRICS.frame_width, METRICS.frame_height)
+g_frame:SetPoint("CENTER")
+g_frame:SetFrameStrata("DIALOG")
+g_frame:SetMovable(true)
+g_frame:SetClampedToScreen(true)
+g_frame:EnableMouse(true)
+g_frame:Hide()
+g_frame.regex_enabled = false
+g_frame.sort_key = "name"
+g_frame.sort_dir = "asc"
+g_frame.filters = {
     scope = "",
     category = "",
     type = "",
     has = {},
 }
-frame.undo_stack = {}
-frame.redo_stack = {}
-apply_backdrop(frame, COLORS.background, COLORS.border)
+g_frame.undo_stack = {}
+g_frame.redo_stack = {}
+apply_backdrop(g_frame, COLORS.background, COLORS.border)
 table.insert(UISpecialFrames, "CVarBrowserFrame")
 
-titlebar = CreateFrame("Frame", nil, frame)
-titlebar:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
-titlebar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
-titlebar:SetHeight(44)
-titlebar:EnableMouse(true)
-titlebar:RegisterForDrag("LeftButton")
+-- Smooth-scroll step for any ScrollFrame: eases toward self.scroll_target
+-- in whole-pixel steps (at least 1px per frame) and stops on the target.
+g_frame.smooth_step = function(self, elapsed)
+    local target = self.scroll_target
+    if not target then
+        self:SetScript("OnUpdate", nil)
+        return
+    end
+    local current = self:GetVerticalScroll() or 0
+    local diff = target - current
+    local px = SCALE.pixel
+    if abs(diff) * px < 1 then
+        self.scroll_target = nil
+        self:SetScript("OnUpdate", nil)
+        self:SetVerticalScroll(target)
+        return
+    end
+    local step = round(diff * min(1, elapsed * 16) * px) / px
+    if step == 0 then
+        step = (diff > 0 and 1 or -1) / px
+    end
+    self:SetVerticalScroll(current + step)
+end
+
+-- Scrolls any ScrollFrame to a whole-pixel offset, gliding there when
+-- smooth is requested and enabled. Whole-pixel offsets keep row text on
+-- the pixel grid against the clip edge; a fractional offset left rows at
+-- half pixels that rounded differently depending on the window position.
+g_frame.scroll_frame_to = function(scroll, value, smooth)
+    local px = SCALE.pixel
+    local range = scroll:GetVerticalScrollRange() or 0
+    local target = clamp(round(value * px) / px, 0, range)
+    if smooth and g_db and g_db.smooth_scroll then
+        scroll.scroll_target = target
+        scroll:SetScript("OnUpdate", g_frame.smooth_step)
+        return
+    end
+    scroll.scroll_target = nil
+    scroll:SetScript("OnUpdate", nil)
+    scroll:SetVerticalScroll(target)
+end
+
+g_titlebar = CreateFrame("Frame", nil, g_frame)
+g_titlebar:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 1, -1)
+g_titlebar:SetPoint("TOPRIGHT", g_frame, "TOPRIGHT", -1, -1)
+g_titlebar:SetHeight(44)
+g_titlebar:EnableMouse(true)
+g_titlebar:RegisterForDrag("LeftButton")
 
 do
-local titlebar_border = snap_texture(titlebar:CreateTexture(nil, "ARTWORK"))
+local titlebar_border = snap_texture(g_titlebar:CreateTexture(nil, "ARTWORK"))
 titlebar_border:SetColorTexture(
     COLORS.border[1],
     COLORS.border[2],
     COLORS.border[3],
     1
 )
-titlebar_border:SetPoint("BOTTOMLEFT", titlebar, "BOTTOMLEFT", 0, 0)
-titlebar_border:SetPoint("BOTTOMRIGHT", titlebar, "BOTTOMRIGHT", 0, 0)
-hairline.register(titlebar_border, "height")
+titlebar_border:SetPoint("BOTTOMLEFT", g_titlebar, "BOTTOMLEFT", 0, 0)
+titlebar_border:SetPoint("BOTTOMRIGHT", g_titlebar, "BOTTOMRIGHT", 0, 0)
+g_hairline.register(titlebar_border, "height")
 
-local brand_bar = snap_texture(titlebar:CreateTexture(nil, "ARTWORK"))
+local brand_bar = snap_texture(g_titlebar:CreateTexture(nil, "ARTWORK"))
 brand_bar:SetColorTexture(
     COLORS.accent[1],
     COLORS.accent[2],
@@ -1346,13 +1032,13 @@ brand_bar:SetColorTexture(
     1
 )
 brand_bar:SetSize(3, 18)
-brand_bar:SetPoint("LEFT", titlebar, "LEFT", 24, 0)
+brand_bar:SetPoint("LEFT", g_titlebar, "LEFT", 24, 0)
 
-local title = make_text(titlebar, FONT_TITLE, "CVar Browser", COLORS.text)
-title:SetPoint("LEFT", titlebar, "LEFT", 39, 0)
+local title = make_text(g_titlebar, FONT_TITLE, "CVar Browser", COLORS.text)
+title:SetPoint("LEFT", g_titlebar, "LEFT", 39, 0)
 
 local subtitle = make_text(
-    titlebar,
+    g_titlebar,
     FONT_META,
     "WoW Forever",
     COLORS.muted
@@ -1361,27 +1047,27 @@ subtitle:SetPoint("LEFT", title, "RIGHT", 12, 0)
 subtitle:SetJustifyV("MIDDLE")
 end
 
-scale_button = CreateFrame("Button", nil, titlebar)
-scale_button:SetSize(112, 24)
-scale_button:SetPoint("RIGHT", titlebar, "RIGHT", -52, 0)
-scale_button.background = scale_button:CreateTexture(nil, "BACKGROUND")
-scale_button.background:SetAllPoints(scale_button)
-scale_button.background:SetColorTexture(
+g_scale_button = CreateFrame("Button", nil, g_titlebar)
+g_scale_button:SetSize(112, 24)
+g_scale_button:SetPoint("RIGHT", g_titlebar, "RIGHT", -52, 0)
+g_scale_button.background = g_scale_button:CreateTexture(nil, "BACKGROUND")
+g_scale_button.background:SetAllPoints(g_scale_button)
+g_scale_button.background:SetColorTexture(
     COLORS.surface[1],
     COLORS.surface[2],
     COLORS.surface[3],
     1
 )
-scale_button.borders = add_border(scale_button, COLORS.border)
-scale_button.label = make_text(
-    scale_button,
+g_scale_button.borders = add_border(g_scale_button, COLORS.border)
+g_scale_button.label = make_text(
+    g_scale_button,
     FONT_META,
     "Size: Standard",
     COLORS.muted
 )
-scale_button.label:SetPoint("LEFT", scale_button, "LEFT", 4, 0)
-scale_button.label:SetJustifyH("LEFT")
-scale_button:SetScript("OnEnter", function(self)
+g_scale_button.label:SetPoint("LEFT", g_scale_button, "LEFT", 4, 0)
+g_scale_button.label:SetJustifyH("LEFT")
+g_scale_button:SetScript("OnEnter", function(self)
     self.background:SetColorTexture(
         COLORS.hover[1],
         COLORS.hover[2],
@@ -1403,7 +1089,7 @@ scale_button:SetScript("OnEnter", function(self)
         1
     )
 end)
-scale_button:SetScript("OnLeave", function(self)
+g_scale_button:SetScript("OnLeave", function(self)
     self.background:SetColorTexture(
         COLORS.surface[1],
         COLORS.surface[2],
@@ -1426,12 +1112,12 @@ scale_button:SetScript("OnLeave", function(self)
     )
 end)
 
-close_button = CreateFrame("Button", nil, titlebar)
-close_button:SetSize(28, 28)
-close_button:SetPoint("RIGHT", titlebar, "RIGHT", -16, 0)
-close_button.label = make_text(close_button, FONT_TITLE, "×", COLORS.muted)
-close_button.label:SetPoint("CENTER", close_button, "CENTER", 0, 0)
-close_button:SetScript("OnEnter", function(self)
+g_close_button = CreateFrame("Button", nil, g_titlebar)
+g_close_button:SetSize(28, 28)
+g_close_button:SetPoint("RIGHT", g_titlebar, "RIGHT", -16, 0)
+g_close_button.label = make_text(g_close_button, FONT_TITLE, "×", COLORS.muted)
+g_close_button.label:SetPoint("CENTER", g_close_button, "CENTER", 0, 0)
+g_close_button:SetScript("OnEnter", function(self)
     self.label:SetTextColor(
         COLORS.error[1],
         COLORS.error[2],
@@ -1439,7 +1125,7 @@ close_button:SetScript("OnEnter", function(self)
         1
     )
 end)
-close_button:SetScript("OnLeave", function(self)
+g_close_button:SetScript("OnLeave", function(self)
     self.label:SetTextColor(
         COLORS.muted[1],
         COLORS.muted[2],
@@ -1448,85 +1134,85 @@ close_button:SetScript("OnLeave", function(self)
     )
 end)
 
-search_frame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-search_frame:SetSize(300, 32)
-search_frame:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -58)
-apply_backdrop(search_frame, COLORS.surface, COLORS.border)
+g_search_frame = CreateFrame("Frame", nil, g_frame, "BackdropTemplate")
+g_search_frame:SetSize(300, 32)
+g_search_frame:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 24, -58)
+apply_backdrop(g_search_frame, COLORS.surface, COLORS.border)
 
-search_box = CreateFrame("EditBox", nil, search_frame)
-search_box:SetPoint("TOPLEFT", search_frame, "TOPLEFT", 10, 0)
-search_box:SetPoint("BOTTOMRIGHT", search_frame, "BOTTOMRIGHT", -10, 0)
-search_box:SetAutoFocus(false)
-search_box:SetFontObject(FONT_BODY)
-search_box:SetTextColor(
+g_search_box = CreateFrame("EditBox", nil, g_search_frame)
+g_search_box:SetPoint("TOPLEFT", g_search_frame, "TOPLEFT", 10, 0)
+g_search_box:SetPoint("BOTTOMRIGHT", g_search_frame, "BOTTOMRIGHT", -10, 0)
+g_search_box:SetAutoFocus(false)
+g_search_box:SetFontObject(FONT_BODY)
+g_search_box:SetTextColor(
     COLORS.text[1],
     COLORS.text[2],
     COLORS.text[3],
     1
 )
-search_box:SetTextInsets(12, 0, 0, 0)
+g_search_box:SetTextInsets(12, 0, 0, 0)
 
-frame.search_icon = search_frame:CreateTexture(nil, "ARTWORK")
-frame.search_icon:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
-frame.search_icon:SetSize(14, 14)
-frame.search_icon:SetPoint("LEFT", search_frame, "LEFT", 4, 0)
-frame.search_icon:SetVertexColor(
+g_frame.search_icon = g_search_frame:CreateTexture(nil, "ARTWORK")
+g_frame.search_icon:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
+g_frame.search_icon:SetSize(14, 14)
+g_frame.search_icon:SetPoint("LEFT", g_search_frame, "LEFT", 4, 0)
+g_frame.search_icon:SetVertexColor(
     COLORS.muted[1],
     COLORS.muted[2],
     COLORS.muted[3],
     1
 )
 
-search_placeholder = make_text(
-    search_frame,
+g_search_placeholder = make_text(
+    g_search_frame,
     FONT_BODY,
     "Search CVars",
     COLORS.muted
 )
-search_placeholder:SetPoint("LEFT", search_frame, "LEFT", 22, 0)
-search_placeholder:SetJustifyH("LEFT")
+g_search_placeholder:SetPoint("LEFT", g_search_frame, "LEFT", 22, 0)
+g_search_placeholder:SetJustifyH("LEFT")
 
-frame.regex_chip = create_button(frame, ".*", 26, 26)
-frame.regex_chip:SetPoint("LEFT", search_frame, "RIGHT", 16, 0)
-frame.regex_chip.label:SetFontObject(FONT_META)
-frame.regex_chip.underline = snap_texture(
-    frame.regex_chip:CreateTexture(nil, "ARTWORK")
+g_frame.regex_chip = create_button(g_frame, ".*", 26, 26)
+g_frame.regex_chip:SetPoint("LEFT", g_search_frame, "RIGHT", 16, 0)
+g_frame.regex_chip.label:SetFontObject(FONT_META)
+g_frame.regex_chip.underline = snap_texture(
+    g_frame.regex_chip:CreateTexture(nil, "ARTWORK")
 )
-frame.regex_chip.underline:SetColorTexture(
+g_frame.regex_chip.underline:SetColorTexture(
     COLORS.accent[1],
     COLORS.accent[2],
     COLORS.accent[3],
     1
 )
-frame.regex_chip.underline:SetPoint(
+g_frame.regex_chip.underline:SetPoint(
     "BOTTOMLEFT",
-    frame.regex_chip,
+    g_frame.regex_chip,
     "BOTTOMLEFT",
     2,
     0
 )
-frame.regex_chip.underline:SetPoint(
+g_frame.regex_chip.underline:SetPoint(
     "BOTTOMRIGHT",
-    frame.regex_chip,
+    g_frame.regex_chip,
     "BOTTOMRIGHT",
     -2,
     0
 )
-hairline.register(frame.regex_chip.underline, "height")
-frame.regex_chip.underline:Hide()
+g_hairline.register(g_frame.regex_chip.underline, "height")
+g_frame.regex_chip.underline:Hide()
 
-changed_button = CreateFrame("Button", nil, frame)
-changed_button:SetSize(160, 32)
-changed_button:SetPoint("LEFT", frame.regex_chip, "RIGHT", 16, 0)
-changed_button.checked = false
+g_changed_button = CreateFrame("Button", nil, g_frame)
+g_changed_button:SetSize(160, 32)
+g_changed_button:SetPoint("LEFT", g_frame.regex_chip, "RIGHT", 16, 0)
+g_changed_button.checked = false
 
-changed_box = CreateFrame("Frame", nil, changed_button)
-changed_box:SetSize(18, 18)
-changed_box:SetPoint("LEFT", changed_button, "LEFT", 0, 0)
+g_changed_box = CreateFrame("Frame", nil, g_changed_button)
+g_changed_box:SetSize(18, 18)
+g_changed_box:SetPoint("LEFT", g_changed_button, "LEFT", 0, 0)
 
 do
-local changed_box_background = snap_texture(changed_box:CreateTexture(nil, "BACKGROUND"))
-changed_box_background:SetAllPoints(changed_box)
+local changed_box_background = snap_texture(g_changed_box:CreateTexture(nil, "BACKGROUND"))
+changed_box_background:SetAllPoints(g_changed_box)
 changed_box_background:SetColorTexture(
     COLORS.surface[1],
     COLORS.surface[2],
@@ -1534,23 +1220,25 @@ changed_box_background:SetColorTexture(
     1
 )
 end
-add_border(changed_box, COLORS.border)
+add_border(g_changed_box, COLORS.border)
 
-changed_tick = make_text(changed_box, FONT_CHECK, "✓", COLORS.accent)
-changed_tick:SetPoint("CENTER", changed_box, "CENTER", 1, 0)
-changed_tick:Hide()
+g_changed_tick = make_text(g_changed_box, FONT_CHECK, "✓", COLORS.accent)
+g_changed_tick:SetPoint("CENTER", g_changed_box, "CENTER", 1, 0)
+g_changed_tick:Hide()
 
-changed_label = make_text(
-    changed_button,
+do
+local changed_label = make_text(
+    g_changed_button,
     FONT_BODY,
     "Changed only",
     COLORS.text
 )
-changed_label:SetPoint("LEFT", changed_box, "RIGHT", 8, 0)
+changed_label:SetPoint("LEFT", g_changed_box, "RIGHT", 8, 0)
+end
 
-count_text = make_text(frame, FONT_META, "", COLORS.muted)
-count_text:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -67)
-count_text:SetJustifyH("RIGHT")
+g_count_text = make_text(g_frame, FONT_META, "", COLORS.muted)
+g_count_text:SetPoint("TOPRIGHT", g_frame, "TOPRIGHT", -24, -67)
+g_count_text:SetJustifyH("RIGHT")
 
 do
     local function set_chip_active(button, active)
@@ -1592,7 +1280,7 @@ do
     end
 
     local function filter_count()
-        local filters = frame.filters
+        local filters = g_frame.filters
         local count = 0
         if filters.scope ~= "" then
             count = count + 1
@@ -1654,9 +1342,9 @@ do
     end
 
     local function create_popup(width, height)
-        local popup = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        local popup = CreateFrame("Frame", nil, g_frame, "BackdropTemplate")
         popup:SetSize(width, height)
-        popup:SetFrameLevel(frame:GetFrameLevel() + 20)
+        popup:SetFrameLevel(g_frame:GetFrameLevel() + 20)
         popup:Hide()
         apply_backdrop(popup, COLORS.surface, COLORS.border)
         return popup
@@ -1666,7 +1354,7 @@ do
         button:SetWidth(
             max(
                 minimum,
-                snap(
+                round(
                     left_padding
                         + button.label:GetStringWidth()
                         + 6
@@ -1675,21 +1363,21 @@ do
         )
     end
 
-    frame.filter_chip = create_button(frame, "Filters off", 104, 26)
-    frame.filter_chip:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -94)
-    frame.filter_chip.label:SetFontObject(FONT_META)
-    frame.filter_chip.label:ClearAllPoints()
-    frame.filter_chip.label:SetPoint(
+    g_frame.filter_chip = create_button(g_frame, "Filters off", 104, 26)
+    g_frame.filter_chip:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 24, -94)
+    g_frame.filter_chip.label:SetFontObject(FONT_META)
+    g_frame.filter_chip.label:ClearAllPoints()
+    g_frame.filter_chip.label:SetPoint(
         "LEFT",
-        frame.filter_chip,
+        g_frame.filter_chip,
         "LEFT",
         18,
         0
     )
-    frame.filter_chip.label:SetJustifyH("LEFT")
-    local filter_icon = CreateFrame("Frame", nil, frame.filter_chip)
+    g_frame.filter_chip.label:SetJustifyH("LEFT")
+    local filter_icon = CreateFrame("Frame", nil, g_frame.filter_chip)
     filter_icon:SetSize(10, 9)
-    filter_icon:SetPoint("TOPLEFT", frame.filter_chip, "TOPLEFT", 4, -9)
+    filter_icon:SetPoint("TOPLEFT", g_frame.filter_chip, "TOPLEFT", 4, -9)
     local filter_icon_parts = {
         { 10, 0 },
         { 6, 4 },
@@ -1707,28 +1395,28 @@ do
         line:SetPoint("TOPLEFT", filter_icon, "TOPLEFT", 0, -part[2])
     end
 
-    frame.sort_chip = create_button(frame, "Sort name asc", 150, 26)
-    frame.sort_chip:SetPoint("LEFT", frame.filter_chip, "RIGHT", 8, 0)
-    frame.sort_chip.label:SetFontObject(FONT_META)
-    frame.sort_chip.label:ClearAllPoints()
-    frame.sort_chip.label:SetPoint(
+    g_frame.sort_chip = create_button(g_frame, "Sort name asc", 150, 26)
+    g_frame.sort_chip:SetPoint("LEFT", g_frame.filter_chip, "RIGHT", 8, 0)
+    g_frame.sort_chip.label:SetFontObject(FONT_META)
+    g_frame.sort_chip.label:ClearAllPoints()
+    g_frame.sort_chip.label:SetPoint(
         "LEFT",
-        frame.sort_chip,
+        g_frame.sort_chip,
         "LEFT",
         18,
         0
     )
-    frame.sort_chip.label:SetJustifyH("LEFT")
-    frame.sort_chip.icon = CreateFrame("Frame", nil, frame.sort_chip)
-    frame.sort_chip.icon:SetSize(10, 10)
-    frame.sort_chip.icon:SetPoint(
+    g_frame.sort_chip.label:SetJustifyH("LEFT")
+    g_frame.sort_chip.icon = CreateFrame("Frame", nil, g_frame.sort_chip)
+    g_frame.sort_chip.icon:SetSize(10, 10)
+    g_frame.sort_chip.icon:SetPoint(
         "TOPLEFT",
-        frame.sort_chip,
+        g_frame.sort_chip,
         "TOPLEFT",
         4,
         -8
     )
-    frame.sort_chip.icon_parts = {}
+    g_frame.sort_chip.icon_parts = {}
     local sort_icon_rows = {
         { 2, 0, 1 },
         { 1, 1, 3 },
@@ -1753,7 +1441,7 @@ do
     }
     for _, row_spec in ipairs(sort_icon_rows) do
         local part = snap_texture(
-            frame.sort_chip.icon:CreateTexture(nil, "ARTWORK")
+            g_frame.sort_chip.icon:CreateTexture(nil, "ARTWORK")
         )
         part:SetColorTexture(
             COLORS.muted[1],
@@ -1764,107 +1452,110 @@ do
         part:SetSize(row_spec[3], 1)
         part:SetPoint(
             "TOPLEFT",
-            frame.sort_chip.icon,
+            g_frame.sort_chip.icon,
             "TOPLEFT",
             row_spec[1],
             -row_spec[2]
         )
-        frame.sort_chip.icon_parts[#frame.sort_chip.icon_parts + 1] = part
+        g_frame.sort_chip.icon_parts[#g_frame.sort_chip.icon_parts + 1] = part
     end
 
-    frame.undo_button = create_button(frame, "↩", 30, 26)
-    frame.undo_button:SetPoint("LEFT", frame.sort_chip, "RIGHT", 8, 0)
-    frame.undo_button.label:SetFontObject(FONT_CHECK)
-    frame.undo_button.label:ClearAllPoints()
-    frame.undo_button.label:SetPoint(
+    g_frame.undo_button = create_button(g_frame, "↩", 30, 26)
+    g_frame.undo_button:SetPoint("LEFT", g_frame.sort_chip, "RIGHT", 8, 0)
+    g_frame.undo_button.label:SetFontObject(FONT_CHECK)
+    g_frame.undo_button.label:ClearAllPoints()
+    g_frame.undo_button.label:SetPoint(
         "CENTER",
-        frame.undo_button,
-        "CENTER",
-        -1,
-        -2
-    )
-
-    frame.redo_button = create_button(frame, "↪", 30, 26)
-    frame.redo_button:SetPoint("LEFT", frame.undo_button, "RIGHT", 8, 0)
-    frame.redo_button.label:SetFontObject(FONT_CHECK)
-    frame.redo_button.label:ClearAllPoints()
-    frame.redo_button.label:SetPoint(
-        "CENTER",
-        frame.redo_button,
+        g_frame.undo_button,
         "CENTER",
         -1,
         -2
     )
 
-    frame.copy_button = create_button(frame, "Copy", 64, 26)
-    frame.copy_button:SetPoint("LEFT", frame.redo_button, "RIGHT", 8, 0)
-    frame.copy_button.label:SetFontObject(FONT_META)
+    g_frame.redo_button = create_button(g_frame, "↪", 30, 26)
+    g_frame.redo_button:SetPoint("LEFT", g_frame.undo_button, "RIGHT", 8, 0)
+    g_frame.redo_button.label:SetFontObject(FONT_CHECK)
+    g_frame.redo_button.label:ClearAllPoints()
+    g_frame.redo_button.label:SetPoint(
+        "CENTER",
+        g_frame.redo_button,
+        "CENTER",
+        -1,
+        -2
+    )
 
-    frame.filter_popup = create_popup(244, 500)
-    frame.filter_popup:SetPoint(
+    g_frame.copy_button = create_button(g_frame, "Copy", 64, 26)
+    g_frame.copy_button:SetPoint("LEFT", g_frame.redo_button, "RIGHT", 8, 0)
+    g_frame.copy_button.label:SetFontObject(FONT_META)
+
+    g_frame.filter_popup = create_popup(244, 500)
+    g_frame.filter_popup:SetPoint(
         "TOPLEFT",
-        frame.filter_chip,
+        g_frame.filter_chip,
         "BOTTOMLEFT",
         0,
         -4
     )
 
     local filter_header = make_text(
-        frame.filter_popup,
+        g_frame.filter_popup,
         FONT_META,
         "Filters",
         COLORS.muted
     )
-    filter_header:SetPoint("TOPLEFT", frame.filter_popup, "TOPLEFT", 8, -8)
+    filter_header:SetPoint("TOPLEFT", g_frame.filter_popup, "TOPLEFT", 8, -8)
 
-    frame.filter_clear = create_button(
-        frame.filter_popup,
+    g_frame.filter_clear = create_button(
+        g_frame.filter_popup,
         "Clear all",
         70,
         20
     )
-    frame.filter_clear:SetPoint("TOPRIGHT", frame.filter_popup, "TOPRIGHT", -6, -5)
-    frame.filter_clear.label:SetFontObject(FONT_META)
+    g_frame.filter_clear:SetPoint("TOPRIGHT", g_frame.filter_popup, "TOPRIGHT", -6, -5)
+    g_frame.filter_clear.label:SetFontObject(FONT_META)
 
-    frame.filter_scroll = CreateFrame(
+    g_frame.filter_scroll = CreateFrame(
         "ScrollFrame",
         nil,
-        frame.filter_popup
+        g_frame.filter_popup
     )
-    frame.filter_scroll:SetPoint("TOPLEFT", frame.filter_popup, "TOPLEFT", 4, -30)
-    frame.filter_scroll:SetPoint(
+    g_frame.filter_scroll:SetPoint("TOPLEFT", g_frame.filter_popup, "TOPLEFT", 4, -30)
+    g_frame.filter_scroll:SetPoint(
         "BOTTOMRIGHT",
-        frame.filter_popup,
+        g_frame.filter_popup,
         "BOTTOMRIGHT",
         -12,
         4
     )
-    frame.filter_scroll:EnableMouseWheel(true)
-    frame.filter_scroll:SetScript("OnMouseWheel", function(self, delta)
-        local range = self:GetVerticalScrollRange() or 0
-        self:SetVerticalScroll(
-            clamp((self:GetVerticalScroll() or 0) - delta * 40, 0, range)
-        )
-    end)
+    g_frame.filter_scroll:EnableMouseWheel(true)
+    -- Shared by the list and the whole popup so the wheel works anywhere
+    -- over the filter menu.
+    local function scroll_filter_list(_, delta)
+        -- Chain from the pending target so fast wheel spins accumulate.
+        local scroll = g_frame.filter_scroll
+        local base = scroll.scroll_target or scroll:GetVerticalScroll() or 0
+        g_frame.scroll_frame_to(scroll, base - delta * 40, true)
+    end
+    g_frame.filter_scroll:SetScript("OnMouseWheel", scroll_filter_list)
 
-    frame.filter_scrollbar = CreateFrame("Frame", nil, frame.filter_popup)
-    frame.filter_scrollbar:SetPoint(
+    g_frame.filter_scrollbar = CreateFrame("Frame", nil, g_frame.filter_popup)
+    g_frame.filter_scrollbar:SetPoint(
         "TOPRIGHT",
-        frame.filter_popup,
+        g_frame.filter_popup,
         "TOPRIGHT",
         -4,
         -30
     )
-    frame.filter_scrollbar:SetPoint(
+    g_frame.filter_scrollbar:SetPoint(
         "BOTTOMRIGHT",
-        frame.filter_popup,
+        g_frame.filter_popup,
         "BOTTOMRIGHT",
         -4,
         4
     )
-    frame.filter_scrollbar:SetWidth(6)
+    g_frame.filter_scrollbar:SetWidth(6)
     local filter_scroll_track = snap_texture(
-        frame.filter_scrollbar:CreateTexture(nil, "ARTWORK")
+        g_frame.filter_scrollbar:CreateTexture(nil, "ARTWORK")
     )
     filter_scroll_track:SetColorTexture(
         COLORS.hover[1],
@@ -1872,137 +1563,194 @@ do
         COLORS.hover[3],
         1
     )
-    filter_scroll_track:SetPoint("TOP", frame.filter_scrollbar, "TOP", 0, 0)
+    filter_scroll_track:SetPoint("TOP", g_frame.filter_scrollbar, "TOP", 0, 0)
     filter_scroll_track:SetPoint(
         "BOTTOM",
-        frame.filter_scrollbar,
+        g_frame.filter_scrollbar,
         "BOTTOM",
         0,
         0
     )
     filter_scroll_track:SetWidth(4)
-    frame.filter_scroll_thumb = CreateFrame("Frame", nil, frame.filter_scrollbar)
-    frame.filter_scroll_thumb:SetWidth(6)
-    frame.filter_scroll_thumb.background = snap_texture(
-        frame.filter_scroll_thumb:CreateTexture(nil, "ARTWORK")
+    g_frame.filter_scroll_thumb = CreateFrame("Frame", nil, g_frame.filter_scrollbar)
+    g_frame.filter_scroll_thumb:SetWidth(6)
+    g_frame.filter_scroll_thumb.background = snap_texture(
+        g_frame.filter_scroll_thumb:CreateTexture(nil, "ARTWORK")
     )
-    frame.filter_scroll_thumb.background:SetAllPoints(
-        frame.filter_scroll_thumb
+    g_frame.filter_scroll_thumb.background:SetAllPoints(
+        g_frame.filter_scroll_thumb
     )
-    frame.filter_scroll_thumb.background:SetColorTexture(
+    g_frame.filter_scroll_thumb.background:SetColorTexture(
         COLORS.muted[1],
         COLORS.muted[2],
         COLORS.muted[3],
         1
     )
-    frame.filter_scrollbar:Hide()
+    g_frame.filter_scrollbar:Hide()
 
-    frame.filter_content = CreateFrame(
+    g_frame.filter_content = CreateFrame(
         "Frame",
         nil,
-        frame.filter_scroll
+        g_frame.filter_scroll
     )
-    frame.filter_content:SetWidth(220)
-    frame.filter_content:SetHeight(1)
-    frame.filter_scroll:SetScrollChild(frame.filter_content)
-    frame.filter_rows = {}
+    g_frame.filter_content:SetWidth(220)
+    g_frame.filter_content:SetHeight(1)
+    g_frame.filter_scroll:SetScrollChild(g_frame.filter_content)
+    g_frame.filter_rows = {}
 
     local function update_filter_scrollbar()
-        local range = frame.filter_scroll:GetVerticalScrollRange() or 0
-        local viewport = frame.filter_scroll:GetHeight() or 1
+        local range = g_frame.filter_scroll:GetVerticalScrollRange() or 0
+        local viewport = g_frame.filter_scroll:GetHeight() or 1
         if range <= 1 then
-            frame.filter_scrollbar:Hide()
+            g_frame.filter_scrollbar:Hide()
             return
         end
-        frame.filter_scrollbar:Show()
+        g_frame.filter_scrollbar:Show()
         local thumb_height = max(24, floor(viewport * viewport / (range + viewport)))
         local max_top = viewport - thumb_height
-        local scroll = frame.filter_scroll:GetVerticalScroll() or 0
+        local scroll = g_frame.filter_scroll:GetVerticalScroll() or 0
         local top = range > 0 and scroll / range * max_top or 0
-        frame.filter_scroll_thumb:SetHeight(thumb_height)
-        frame.filter_scroll_thumb:ClearAllPoints()
-        frame.filter_scroll_thumb:SetPoint(
+        g_frame.filter_scroll_thumb:SetHeight(thumb_height)
+        g_frame.filter_scroll_thumb:ClearAllPoints()
+        g_frame.filter_scroll_thumb:SetPoint(
             "TOP",
-            frame.filter_scrollbar,
+            g_frame.filter_scrollbar,
             "TOP",
             0,
             -top
         )
-        if frame.snap_box then
-            frame.snap_box(frame.filter_scroll_thumb)
-        end
+        g_frame.snap_box(g_frame.filter_scroll_thumb)
     end
-    frame.filter_scroll:SetScript("OnVerticalScroll", update_filter_scrollbar)
-    frame.update_filter_scrollbar = update_filter_scrollbar
+    g_frame.filter_scroll:SetScript("OnVerticalScroll", update_filter_scrollbar)
+    g_frame.update_filter_scrollbar = update_filter_scrollbar
 
-    frame.filter_popup:EnableMouseWheel(true)
-    frame.filter_popup:SetScript("OnMouseWheel", function(self, delta)
-        local range = frame.filter_scroll:GetVerticalScrollRange() or 0
-        frame.filter_scroll:SetVerticalScroll(
-            clamp(
-                (frame.filter_scroll:GetVerticalScroll() or 0) - delta * 40,
-                0,
-                range
-            )
-        )
+    g_frame.filter_popup:EnableMouseWheel(true)
+    g_frame.filter_popup:SetScript("OnMouseWheel", scroll_filter_list)
+
+    g_frame.sort_popup = create_popup(170, 140)
+    g_frame.sort_popup:SetPoint(
+        "TOPLEFT",
+        g_frame.sort_chip,
+        "BOTTOMLEFT",
+        0,
+        -4
+    )
+    g_frame.sort_rows = {}
+
+    g_frame.copy_popup = create_popup(170, 140)
+    g_frame.copy_popup:SetPoint(
+        "TOPLEFT",
+        g_frame.copy_button,
+        "BOTTOMLEFT",
+        0,
+        -4
+    )
+    g_frame.copy_rows = {}
+
+    -- CopyToClipboard is protected for addons, so copying shows the text
+    -- highlighted in a focused read-only edit box for the user's Ctrl+C.
+    g_frame.copy_box_frame = create_popup(280, 30)
+    g_frame.copy_box_frame:SetPoint(
+        "TOPLEFT",
+        g_frame.copy_button,
+        "BOTTOMLEFT",
+        0,
+        -4
+    )
+    -- The box only exists while focused, so it wears the focus border like
+    -- the search box and value field (DESIGN.md copy box).
+    g_frame.copy_box_frame:SetBackdropBorderColor(
+        COLORS.accent[1],
+        COLORS.accent[2],
+        COLORS.accent[3],
+        1
+    )
+    g_frame.copy_box = CreateFrame("EditBox", nil, g_frame.copy_box_frame)
+    g_frame.copy_box:SetPoint("TOPLEFT", g_frame.copy_box_frame, "TOPLEFT", 10, 0)
+    g_frame.copy_box:SetPoint(
+        "BOTTOMRIGHT",
+        g_frame.copy_box_frame,
+        "BOTTOMRIGHT",
+        -10,
+        0
+    )
+    g_frame.copy_box:SetAutoFocus(false)
+    g_frame.copy_box:SetFontObject(FONT_BODY)
+    g_frame.copy_box:SetTextColor(
+        COLORS.text[1],
+        COLORS.text[2],
+        COLORS.text[3],
+        1
+    )
+    g_frame.copy_box:SetTextInsets(2, 2, 2, 2)
+    g_frame.copy_box:SetHighlightColor(
+        COLORS.accent[1],
+        COLORS.accent[2],
+        COLORS.accent[3],
+        0.35
+    )
+    g_frame.copy_box:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
     end)
+    g_frame.copy_box:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+    end)
+    g_frame.copy_box:SetScript("OnEditFocusLost", function()
+        g_frame.copy_box_frame:Hide()
+    end)
+    g_frame.copy_box:SetScript("OnTextChanged", function(self, user_input)
+        if user_input then
+            self:SetText(self.copy_text or "")
+            self:HighlightText()
+        end
+    end)
+    g_frame.show_copy_box = function(text)
+        g_frame.copy_box.copy_text = text
+        g_frame.copy_box_frame:Show()
+        g_frame.copy_box:SetText(text)
+        g_frame.copy_box:SetCursorPosition(0)
+        g_frame.copy_box:SetFocus()
+        g_frame.copy_box:HighlightText()
+        g_frame.snap_box(g_frame.copy_box_frame)
+    end
 
-    frame.sort_popup = create_popup(170, 140)
-    frame.sort_popup:SetPoint(
+    g_frame.menu_catcher = CreateFrame("Frame", nil, g_frame)
+    g_frame.menu_catcher:SetPoint(
         "TOPLEFT",
-        frame.sort_chip,
-        "BOTTOMLEFT",
-        0,
-        -4
-    )
-    frame.sort_rows = {}
-
-    frame.copy_popup = create_popup(170, 140)
-    frame.copy_popup:SetPoint(
-        "TOPLEFT",
-        frame.copy_button,
-        "BOTTOMLEFT",
-        0,
-        -4
-    )
-    frame.copy_rows = {}
-
-    frame.menu_catcher = CreateFrame("Frame", nil, frame)
-    frame.menu_catcher:SetPoint(
-        "TOPLEFT",
-        frame,
+        g_frame,
         "TOPLEFT",
         0,
         -122
     )
-    frame.menu_catcher:SetPoint(
+    g_frame.menu_catcher:SetPoint(
         "BOTTOMRIGHT",
-        frame,
+        g_frame,
         "BOTTOMRIGHT",
         0,
         0
     )
-    frame.menu_catcher:SetFrameLevel(frame:GetFrameLevel() + 10)
-    frame.menu_catcher:EnableMouse(true)
-    frame.menu_catcher:SetScript("OnMouseDown", function()
-        frame.close_menus()
+    g_frame.menu_catcher:SetFrameLevel(g_frame:GetFrameLevel() + 10)
+    g_frame.menu_catcher:EnableMouse(true)
+    g_frame.menu_catcher:SetScript("OnMouseDown", function()
+        g_frame.close_menus()
     end)
-    frame.menu_catcher:Hide()
+    g_frame.menu_catcher:Hide()
 
-    frame.close_menus = function()
-        frame.filter_popup:Hide()
-        frame.sort_popup:Hide()
-        frame.copy_popup:Hide()
-        frame.menu_catcher:Hide()
+    g_frame.close_menus = function()
+        g_frame.filter_popup:Hide()
+        g_frame.sort_popup:Hide()
+        g_frame.copy_popup:Hide()
+        g_frame.copy_box_frame:Hide()
+        g_frame.menu_catcher:Hide()
     end
 
     local function take_filter_row()
-        local index = (frame.filter_row_index or 0) + 1
-        frame.filter_row_index = index
-        local row = frame.filter_rows[index]
+        local index = (g_frame.filter_row_index or 0) + 1
+        g_frame.filter_row_index = index
+        local row = g_frame.filter_rows[index]
         if not row then
-            row = create_menu_row(frame.filter_content, 20)
-            frame.filter_rows[index] = row
+            row = create_menu_row(g_frame.filter_content, 20)
+            g_frame.filter_rows[index] = row
         end
         row:Show()
         row:SetEnabled(true)
@@ -2010,17 +1758,17 @@ do
         row.check:Hide()
         row.note:SetText("")
         row.on_click = nil
-        return row, index
+        return row
     end
 
-    local function place_filter_row(row, index, y)
+    local function place_filter_row(row, y)
         row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", frame.filter_content, "TOPLEFT", 0, -y)
-        row:SetPoint("TOPRIGHT", frame.filter_content, "TOPRIGHT", 0, -y)
+        row:SetPoint("TOPLEFT", g_frame.filter_content, "TOPLEFT", 0, -y)
+        row:SetPoint("TOPRIGHT", g_frame.filter_content, "TOPRIGHT", 0, -y)
     end
 
     local function add_filter_group(label, y)
-        local row, index = take_filter_row()
+        local row = take_filter_row()
         row.label:ClearAllPoints()
         row.label:SetPoint("LEFT", row, "LEFT", 4, 0)
         row.label:SetText(label)
@@ -2032,12 +1780,12 @@ do
         )
         row:SetEnabled(false)
         row:EnableMouse(false)
-        place_filter_row(row, index, y)
+        place_filter_row(row, y)
         return y + 18
     end
 
-    local function add_filter_option(value, label, selected, on_click, y)
-        local row, index = take_filter_row()
+    local function add_filter_option(label, checked, on_click, y)
+        local row = take_filter_row()
         row.label:ClearAllPoints()
         row.label:SetPoint("LEFT", row, "LEFT", 24, 0)
         row.label:SetText(label)
@@ -2047,90 +1795,65 @@ do
             COLORS.text[3],
             1
         )
-        if selected then
+        if checked then
             row.check:Show()
         end
         row.on_click = on_click
         row:EnableMouse(true)
-        place_filter_row(row, index, y)
+        place_filter_row(row, y)
         return y + 20
     end
 
     local function change_filter(field, value)
-        frame.filters[field] = value
-        frame.refresh_filter_menu()
-        frame.update_filter_chip()
-        if frame.rebuild_results then
-            frame.rebuild_results()
-        end
+        g_frame.filters[field] = value
+        g_frame.refresh_filter_menu()
+        g_frame.update_filter_chip()
+        g_frame.rebuild_results()
     end
 
     local function toggle_has(value)
-        local has = frame.filters.has
+        local has = g_frame.filters.has
         if has[value] then
             has[value] = nil
         else
             has[value] = true
         end
-        frame.refresh_filter_menu()
-        frame.update_filter_chip()
-        if frame.rebuild_results then
-            frame.rebuild_results()
-        end
+        g_frame.refresh_filter_menu()
+        g_frame.update_filter_chip()
+        g_frame.rebuild_results()
     end
 
-    frame.refresh_filter_menu = function()
-        local scroll = frame.filter_scroll:GetVerticalScroll() or 0
-        frame.filter_row_index = 0
+    -- One radio option of a single-value filter field (scope/category/type).
+    local function add_filter_choice(field, value, label, y)
+        return add_filter_option(label, g_frame.filters[field] == value, function()
+            change_filter(field, value)
+        end, y)
+    end
+
+    g_frame.refresh_filter_menu = function()
+        local scroll = g_frame.filter_scroll:GetVerticalScroll() or 0
+        g_frame.filter_row_index = 0
         local y = 0
-        local filters = frame.filters
+        local filters = g_frame.filters
 
         y = add_filter_group("Scope", y)
-        y = add_filter_option("", "All", filters.scope == "", function()
-            change_filter("scope", "")
-        end, y)
-        y = add_filter_option(
-            "account",
-            "Account",
-            filters.scope == "account",
-            function()
-                change_filter("scope", "account")
-            end,
-            y
-        )
-        y = add_filter_option(
-            "character",
-            "Character",
-            filters.scope == "character",
-            function()
-                change_filter("scope", "character")
-            end,
-            y
-        )
-        y = add_filter_option(
-            "local",
-            "Local",
-            filters.scope == "local",
-            function()
-                change_filter("scope", "local")
-            end,
-            y
-        )
+        y = add_filter_choice("scope", "", "All", y)
+        y = add_filter_choice("scope", "account", "Account", y)
+        y = add_filter_choice("scope", "character", "Character", y)
+        y = add_filter_choice("scope", "local", "Local", y)
 
         y = add_filter_group("Category", y)
-        y = add_filter_option("", "All", filters.category == "", function()
-            change_filter("category", "")
-        end, y)
+        y = add_filter_choice("category", "", "All", y)
         local categories = {}
         local seen_categories = {}
-        for _, entry in ipairs(entries) do
+        for _, entry in ipairs(g_entries) do
             local category = entry.category
             if category and category ~= "" then
-                local key = category:lower()
-                if not seen_categories[key] then
-                    seen_categories[key] = true
+                local category_key = category:lower()
+                if not seen_categories[category_key] then
+                    seen_categories[category_key] = true
                     categories[#categories + 1] = {
-                        value = key,
+                        value = category_key,
                         label = category,
                     }
                 end
@@ -2140,22 +1863,11 @@ do
             return a.label:lower() < b.label:lower()
         end)
         for _, category in ipairs(categories) do
-            local value = category.value
-            y = add_filter_option(
-                value,
-                category.label,
-                filters.category == value,
-                function()
-                    change_filter("category", value)
-                end,
-                y
-            )
+            y = add_filter_choice("category", category.value, category.label, y)
         end
 
         y = add_filter_group("Type", y)
-        y = add_filter_option("", "All", filters.type == "", function()
-            change_filter("type", "")
-        end, y)
+        y = add_filter_choice("type", "", "All", y)
         local value_types = {
             { "number", "Number" },
             { "text", "Text" },
@@ -2166,16 +1878,7 @@ do
             { "serialized", "Serialized" },
         }
         for _, value_type in ipairs(value_types) do
-            local value = value_type[1]
-            y = add_filter_option(
-                value,
-                value_type[2],
-                filters.type == value,
-                function()
-                    change_filter("type", value)
-                end,
-                y
-            )
+            y = add_filter_choice("type", value_type[1], value_type[2], y)
         end
 
         y = add_filter_group("Has", y)
@@ -2189,7 +1892,6 @@ do
         for _, option in ipairs(has_options) do
             local value = option[1]
             y = add_filter_option(
-                value,
                 option[2],
                 filters.has[value] == true,
                 function()
@@ -2199,122 +1901,110 @@ do
             )
         end
 
-        for index = frame.filter_row_index + 1, #frame.filter_rows do
-            frame.filter_rows[index]:Hide()
+        for index = g_frame.filter_row_index + 1, #g_frame.filter_rows do
+            g_frame.filter_rows[index]:Hide()
         end
-        frame.filter_content:SetHeight(max(1, y + 4))
-        frame.filter_clear:SetEnabled(
-            filter_count() > 0 or changed_button.checked
+        g_frame.filter_content:SetHeight(max(1, y + 4))
+        g_frame.filter_clear:SetEnabled(
+            filter_count() > 0 or g_changed_button.checked
         )
-        frame.filter_clear:SetAlpha(
-            (filter_count() > 0 or changed_button.checked) and 1 or 0.38
+        g_frame.filter_clear:SetAlpha(
+            (filter_count() > 0 or g_changed_button.checked) and 1 or 0.38
         )
-        frame.filter_scroll:SetVerticalScroll(
-            min(scroll, frame.filter_scroll:GetVerticalScrollRange() or 0)
+        g_frame.filter_scroll:SetVerticalScroll(
+            min(scroll, g_frame.filter_scroll:GetVerticalScrollRange() or 0)
         )
-        frame.update_filter_scrollbar()
+        g_frame.update_filter_scrollbar()
     end
 
-    frame.update_filter_chip = function()
+    g_frame.update_filter_chip = function()
         local count = filter_count()
-        frame.filter_chip.label:SetText(
+        g_frame.filter_chip.label:SetText(
             count > 0 and ("Filters " .. count) or "Filters off"
         )
-        fit_chip(frame.filter_chip, 80, 18)
-        set_chip_active(frame.filter_chip, count > 0)
-        if frame.snap_box then
-            frame.snap_box(frame.filter_chip)
-        end
+        fit_chip(g_frame.filter_chip, 80, 18)
+        set_chip_active(g_frame.filter_chip, count > 0)
+        g_frame.snap_box(g_frame.filter_chip)
     end
 
-    frame.clear_filters = function()
-        frame.filters.scope = ""
-        frame.filters.category = ""
-        frame.filters.type = ""
-        frame.filters.has = {}
-        changed_button.checked = false
-        changed_tick:Hide()
-        frame.refresh_filter_menu()
-        frame.update_filter_chip()
-        if frame.rebuild_results then
-            frame.rebuild_results()
-        end
-        if frame.notify then
-            frame.notify("Filters cleared")
-        end
+    g_frame.clear_filters = function()
+        g_frame.filters.scope = ""
+        g_frame.filters.category = ""
+        g_frame.filters.type = ""
+        g_frame.filters.has = {}
+        g_changed_button.checked = false
+        g_changed_tick:Hide()
+        g_frame.refresh_filter_menu()
+        g_frame.update_filter_chip()
+        g_frame.rebuild_results()
+        g_frame.notify("Filters cleared")
     end
 
-    frame.filter_clear:SetScript("OnClick", function()
-        frame.clear_filters()
+    g_frame.filter_clear:SetScript("OnClick", function()
+        g_frame.clear_filters()
     end)
 
-    frame.filter_chip:SetScript("OnClick", function()
-        if frame.filter_popup:IsShown() then
-            frame.close_menus()
+    g_frame.filter_chip:SetScript("OnClick", function()
+        if g_frame.filter_popup:IsShown() then
+            g_frame.close_menus()
         else
-            frame.close_menus()
-            frame.refresh_filter_menu()
-            frame.menu_catcher:Show()
-            frame.filter_popup:Show()
-            frame.snap_box(frame.filter_popup)
-            frame.snap_region_tree(frame.filter_popup)
+            g_frame.close_menus()
+            g_frame.refresh_filter_menu()
+            g_frame.menu_catcher:Show()
+            g_frame.filter_popup:Show()
+            g_frame.snap_box(g_frame.filter_popup)
+            g_frame.snap_region_tree(g_frame.filter_popup)
         end
     end)
 
-    frame.sort_chip:SetScript("OnClick", function()
-        if frame.sort_popup:IsShown() then
-            frame.close_menus()
+    g_frame.sort_chip:SetScript("OnClick", function()
+        if g_frame.sort_popup:IsShown() then
+            g_frame.close_menus()
         else
-            frame.close_menus()
-            frame.refresh_sort_menu()
-            frame.menu_catcher:Show()
-            frame.sort_popup:Show()
-            frame.snap_box(frame.sort_popup)
-            frame.snap_region_tree(frame.sort_popup)
+            g_frame.close_menus()
+            g_frame.refresh_sort_menu()
+            g_frame.menu_catcher:Show()
+            g_frame.sort_popup:Show()
+            g_frame.snap_box(g_frame.sort_popup)
+            g_frame.snap_region_tree(g_frame.sort_popup)
         end
     end)
 
-    frame.copy_button:SetScript("OnClick", function()
-        if frame.copy_popup:IsShown() then
-            frame.close_menus()
-        elseif selected then
-            frame.close_menus()
-            frame.refresh_copy_menu()
-            frame.menu_catcher:Show()
-            frame.copy_popup:Show()
-            frame.snap_box(frame.copy_popup)
-            frame.snap_region_tree(frame.copy_popup)
+    g_frame.copy_button:SetScript("OnClick", function()
+        if g_frame.copy_popup:IsShown() then
+            g_frame.close_menus()
+        elseif g_selected then
+            g_frame.close_menus()
+            g_frame.refresh_copy_menu()
+            g_frame.menu_catcher:Show()
+            g_frame.copy_popup:Show()
+            g_frame.snap_box(g_frame.copy_popup)
+            g_frame.snap_region_tree(g_frame.copy_popup)
         end
     end)
 
-    frame.undo_button:SetScript("OnClick", function()
+    g_frame.undo_button:SetScript("OnClick", function()
         run_command("undo")
     end)
 
-    frame.redo_button:SetScript("OnClick", function()
+    g_frame.redo_button:SetScript("OnClick", function()
         run_command("redo")
     end)
 
-    frame.apply_sort = function(key)
-        if frame.sort_key == key then
-            frame.sort_dir = frame.sort_dir == "asc" and "desc" or "asc"
+    g_frame.apply_sort = function(sort_choice)
+        if g_frame.sort_key == sort_choice then
+            g_frame.sort_dir = g_frame.sort_dir == "asc" and "desc" or "asc"
         else
-            frame.sort_key = key
-            frame.sort_dir = key == "changed" and "desc" or "asc"
+            g_frame.sort_key = sort_choice
+            g_frame.sort_dir = sort_choice == "changed" and "desc" or "asc"
         end
-        frame.close_menus()
-        frame.update_sort_chip()
-        if frame.rebuild_results then
-            frame.rebuild_results()
-        end
-        if frame.notify then
-            frame.notify(
-                "Sorted by " .. frame.sort_key .. " " .. frame.sort_dir
-            )
-        end
+        g_frame.close_menus()
+        g_frame.update_sort_chip()
+        g_frame.rebuild_results()
+        g_frame.notify("Sorted by " .. g_frame.sort_key .. " " .. g_frame.sort_dir)
     end
 
-    frame.refresh_sort_menu = function()
+    g_frame.refresh_sort_menu = function()
         local labels = {
             name = "Name",
             type = "Type",
@@ -2324,32 +2014,32 @@ do
             range = "Range width",
         }
         local keys = { "name", "type", "scope", "category", "changed", "range" }
-        for index, key in ipairs(keys) do
-            local row = frame.sort_rows[index]
+        for index, sort_option in ipairs(keys) do
+            local row = g_frame.sort_rows[index]
             if not row then
-                row = create_menu_row(frame.sort_popup, 22)
+                row = create_menu_row(g_frame.sort_popup, 22)
                 row:SetPoint(
                     "TOPLEFT",
-                    frame.sort_popup,
+                    g_frame.sort_popup,
                     "TOPLEFT",
                     0,
                     -(index - 1) * 22 - 4
                 )
                 row:SetPoint(
                     "TOPRIGHT",
-                    frame.sort_popup,
+                    g_frame.sort_popup,
                     "TOPRIGHT",
                     0,
                     -(index - 1) * 22 - 4
                 )
-                frame.sort_rows[index] = row
+                g_frame.sort_rows[index] = row
             end
             row:Show()
             row:EnableMouse(true)
             row:SetAlpha(1)
             row.label:ClearAllPoints()
             row.label:SetPoint("LEFT", row, "LEFT", 24, 0)
-            row.label:SetText(labels[key])
+            row.label:SetText(labels[sort_option])
             row.label:SetTextColor(
                 COLORS.text[1],
                 COLORS.text[2],
@@ -2357,30 +2047,28 @@ do
                 1
             )
             row.note:SetText(
-                frame.sort_key == key and frame.sort_dir or ""
+                g_frame.sort_key == sort_option and g_frame.sort_dir or ""
             )
-            row.check:SetShown(frame.sort_key == key)
+            row.check:SetShown(g_frame.sort_key == sort_option)
             row.on_click = function()
-                frame.apply_sort(key)
+                g_frame.apply_sort(sort_option)
             end
         end
     end
 
-    frame.update_sort_chip = function()
-        frame.sort_chip.label:SetText(
-            "Sort " .. frame.sort_key .. " " .. frame.sort_dir
+    g_frame.update_sort_chip = function()
+        g_frame.sort_chip.label:SetText(
+            "Sort " .. g_frame.sort_key .. " " .. g_frame.sort_dir
         )
-        fit_chip(frame.sort_chip, 100, 18)
+        fit_chip(g_frame.sort_chip, 100, 18)
         set_chip_active(
-            frame.sort_chip,
-            frame.sort_key ~= "name" or frame.sort_dir ~= "asc"
+            g_frame.sort_chip,
+            g_frame.sort_key ~= "name" or g_frame.sort_dir ~= "asc"
         )
-        if frame.snap_box then
-            frame.snap_box(frame.sort_chip)
-        end
+        g_frame.snap_box(g_frame.sort_chip)
     end
 
-    frame.refresh_copy_menu = function()
+    g_frame.refresh_copy_menu = function()
         local fields = {
             { "value", "Copy value" },
             { "raw", "Copy raw value" },
@@ -2390,25 +2078,25 @@ do
             { "range", "Copy range" },
         }
         for index, field in ipairs(fields) do
-            local key = field[1]
-            local row = frame.copy_rows[index]
+            local copy_key = field[1]
+            local row = g_frame.copy_rows[index]
             if not row then
-                row = create_menu_row(frame.copy_popup, 22)
+                row = create_menu_row(g_frame.copy_popup, 22)
                 row:SetPoint(
                     "TOPLEFT",
-                    frame.copy_popup,
+                    g_frame.copy_popup,
                     "TOPLEFT",
                     0,
                     -(index - 1) * 22 - 4
                 )
                 row:SetPoint(
                     "TOPRIGHT",
-                    frame.copy_popup,
+                    g_frame.copy_popup,
                     "TOPRIGHT",
                     0,
                     -(index - 1) * 22 - 4
                 )
-                frame.copy_rows[index] = row
+                g_frame.copy_rows[index] = row
             end
             row:Show()
             row.label:ClearAllPoints()
@@ -2421,65 +2109,62 @@ do
                 1
             )
             row.check:Hide()
-            local missing = selected == nil
-                or (key == "help"
-                    and (selected.help == nil or selected.help == ""))
-                or (key == "range" and selected.range_text == nil)
+            local missing = g_selected == nil
+                or (copy_key == "help"
+                    and (g_selected.help == nil or g_selected.help == ""))
+                or (copy_key == "range" and g_selected.range_text == nil)
             row.note:SetText(
-                selected ~= nil
-                    and key == "help"
-                    and (selected.help == nil or selected.help == "")
+                g_selected ~= nil
+                    and copy_key == "help"
+                    and (g_selected.help == nil or g_selected.help == "")
                     and "none"
-                    or selected ~= nil
-                        and key == "range"
-                        and selected.range_text == nil
+                    or g_selected ~= nil
+                        and copy_key == "range"
+                        and g_selected.range_text == nil
                         and "none"
                     or ""
             )
             row:SetEnabled(not missing)
             row:SetAlpha(missing and 0.38 or 1)
             row.on_click = function()
-                frame.close_menus()
-                run_command("copy " .. key)
+                g_frame.close_menus()
+                run_command("copy " .. copy_key)
             end
         end
     end
 
-    frame.update_copy_button = function()
-        local enabled = selected ~= nil
-        frame.copy_button:SetEnabled(enabled)
-        frame.copy_button:SetAlpha(enabled and 1 or 0.38)
-        if not enabled then
-            frame.copy_popup:Hide()
+    g_frame.update_copy_button = function()
+        local enabled = g_selected ~= nil
+        g_frame.copy_button:SetEnabled(enabled)
+        g_frame.copy_button:SetAlpha(enabled and 1 or 0.38)
+        if not enabled and g_frame.copy_popup:IsShown() then
+            g_frame.close_menus()
         end
     end
 
-    frame.update_history_controls = function()
-        local undo_count = #(frame.undo_stack or {})
-        local redo_count = #(frame.redo_stack or {})
-        frame.undo_button:SetEnabled(undo_count > 0)
-        frame.undo_button:SetAlpha(undo_count > 0 and 1 or 0.38)
-        frame.redo_button:SetEnabled(redo_count > 0)
-        frame.redo_button:SetAlpha(redo_count > 0 and 1 or 0.38)
+    g_frame.update_history_controls = function()
+        local undo_count = #g_frame.undo_stack
+        local redo_count = #g_frame.redo_stack
+        g_frame.undo_button:SetEnabled(undo_count > 0)
+        g_frame.undo_button:SetAlpha(undo_count > 0 and 1 or 0.38)
+        g_frame.redo_button:SetEnabled(redo_count > 0)
+        g_frame.redo_button:SetAlpha(redo_count > 0 and 1 or 0.38)
     end
 
-    frame.update_regex_chip = function()
-        frame.regex_chip.label:SetText(".*")
-        set_chip_active(frame.regex_chip, frame.regex_enabled == true)
-        frame.regex_chip.underline:SetShown(
-            frame.regex_enabled == true
+    g_frame.update_regex_chip = function()
+        set_chip_active(g_frame.regex_chip, g_frame.regex_enabled == true)
+        g_frame.regex_chip.underline:SetShown(
+            g_frame.regex_enabled == true
         )
     end
 
-    frame.regex_chip:SetScript("OnClick", function()
-        frame.regex_enabled = not frame.regex_enabled
-        frame.update_regex_chip()
-        if frame.rebuild_results then
-            frame.rebuild_results()
-        end
+    g_frame.regex_chip:SetScript("OnClick", function()
+        g_frame.regex_enabled = not g_frame.regex_enabled
+        g_frame.update_regex_chip()
+        g_frame.rebuild_results()
     end)
 
-    frame.snap_box = function(region)
+    g_frame.snap_box = function(region)
         if not region or not region:IsShown() then
             return
         end
@@ -2492,14 +2177,10 @@ do
             or not left or not top or not width or not height then
             return
         end
-        local snapped_left_px = floor(left * effective_scale + 0.5)
-        local snapped_right_px = floor(
-            (left + width) * effective_scale + 0.5
-        )
-        local snapped_top_px = floor(top * effective_scale + 0.5)
-        local snapped_bottom_px = floor(
-            (top - height) * effective_scale + 0.5
-        )
+        local snapped_left_px = round(left * effective_scale)
+        local snapped_right_px = round((left + width) * effective_scale)
+        local snapped_top_px = round(top * effective_scale)
+        local snapped_bottom_px = round((top - height) * effective_scale)
         if snapped_right_px <= snapped_left_px then
             snapped_right_px = snapped_left_px + 1
         end
@@ -2531,7 +2212,7 @@ do
         end
     end
 
-    frame.snap_line = function(region)
+    g_frame.snap_line = function(region)
         if not region or not region:IsShown() then
             return
         end
@@ -2542,12 +2223,11 @@ do
             or not top or not height then
             return
         end
-        local snapped_top = floor(top * effective_scale + 0.5)
-            / effective_scale
+        local snapped_top = round(top * effective_scale) / effective_scale
         local dy = snapped_top - top
         local snapped_height = max(
             1,
-            floor(height * effective_scale + 0.5) / effective_scale
+            round(height * effective_scale) / effective_scale
         )
         local saved_points = {}
         for index = 1, region:GetNumPoints() do
@@ -2577,34 +2257,32 @@ do
             region:SetHeight(snapped_height)
         end
     end
-    frame.snap_boxes = {
-        search_frame,
-        frame.regex_chip,
-        changed_button,
-        frame.filter_chip,
-        frame.sort_chip,
-        frame.undo_button,
-        frame.redo_button,
-        frame.copy_button,
-        changed_box,
-        scale_button,
-        detail_edit_frame,
-        set_button,
-        reset_button,
+    g_frame.snap_boxes = {
+        g_search_frame,
+        g_frame.regex_chip,
+        g_changed_button,
+        g_frame.filter_chip,
+        g_frame.sort_chip,
+        g_frame.undo_button,
+        g_frame.redo_button,
+        g_frame.copy_button,
+        g_changed_box,
+        g_scale_button,
     }
 
-    frame.update_filter_chip()
-    frame.update_sort_chip()
-    frame.update_regex_chip()
-    frame.update_copy_button()
-    frame.update_history_controls()
+    g_frame.update_filter_chip()
+    g_frame.update_sort_chip()
+    g_frame.update_regex_chip()
+    g_frame.update_copy_button()
+    g_frame.update_history_controls()
 end
 
-local header = CreateFrame("Frame", nil, frame)
-header:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -132)
-header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -48, -132)
-header:SetHeight(16)
 do
+local header = CreateFrame("Frame", nil, g_frame)
+header:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 24, -132)
+header:SetPoint("TOPRIGHT", g_frame, "TOPRIGHT", -48, -132)
+header:SetHeight(16)
+g_frame.snap_lines = { g_titlebar, header }
 local header_border = snap_texture(header:CreateTexture(nil, "ARTWORK"))
 header_border:SetColorTexture(
     COLORS.border[1],
@@ -2614,7 +2292,7 @@ header_border:SetColorTexture(
 )
 header_border:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 0, 0)
 header_border:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", 24, 0)
-hairline.register(header_border, "height")
+g_hairline.register(header_border, "height")
 
 local header_name = make_text(header, FONT_META, "CVar", COLORS.muted)
 header_name:SetPoint("LEFT", header, "LEFT", 6, 1)
@@ -2627,222 +2305,518 @@ header_value:SetPoint("RIGHT", header, "RIGHT", -6, 1)
 header_value:SetJustifyH("RIGHT")
 end
 
-scroll_frame = CreateFrame("ScrollFrame", nil, frame)
-scroll_frame:SetPoint("TOPLEFT", frame, "TOPLEFT", LIST_LEFT, -LIST_TOP)
-scroll_frame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -LIST_RIGHT, LIST_BOTTOM)
-scroll_frame:EnableMouseWheel(true)
+g_scroll_frame = CreateFrame("ScrollFrame", nil, g_frame)
+g_scroll_frame:SetPoint("TOPLEFT", g_frame, "TOPLEFT", METRICS.list_left, -METRICS.list_top)
+g_scroll_frame:SetPoint(
+    "BOTTOMRIGHT",
+    g_frame,
+    "BOTTOMRIGHT",
+    -METRICS.list_right,
+    METRICS.list_bottom
+)
+g_scroll_frame:EnableMouseWheel(true)
 
-scroll_child = CreateFrame("Frame", nil, scroll_frame)
-scroll_child:SetWidth(LIST_WIDTH)
-scroll_child:SetHeight(1)
-scroll_frame:SetScrollChild(scroll_child)
+g_scroll_child = CreateFrame("Frame", nil, g_scroll_frame)
+g_scroll_child:SetWidth(METRICS.list_width)
+g_scroll_child:SetHeight(1)
+g_scroll_frame:SetScrollChild(g_scroll_child)
 
-scrollbar = CreateFrame("Frame", nil, frame)
-scrollbar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -LIST_TOP)
-scrollbar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -24, LIST_BOTTOM)
-scrollbar:SetWidth(8)
-scrollbar_track = snap_texture(scrollbar:CreateTexture(nil, "ARTWORK"))
+g_scrollbar = CreateFrame("Frame", nil, g_frame)
+g_scrollbar:SetPoint("TOPRIGHT", g_frame, "TOPRIGHT", -24, -METRICS.list_top)
+g_scrollbar:SetPoint("BOTTOMRIGHT", g_frame, "BOTTOMRIGHT", -24, METRICS.list_bottom)
+g_scrollbar:SetWidth(8)
+do
+local scrollbar_track = snap_texture(g_scrollbar:CreateTexture(nil, "ARTWORK"))
 scrollbar_track:SetColorTexture(
     COLORS.hover[1],
     COLORS.hover[2],
     COLORS.hover[3],
     1
 )
-scrollbar_track:SetPoint("TOP", scrollbar, "TOP", 0, 0)
-scrollbar_track:SetPoint("BOTTOM", scrollbar, "BOTTOM", 0, 0)
+scrollbar_track:SetPoint("TOP", g_scrollbar, "TOP", 0, 0)
+scrollbar_track:SetPoint("BOTTOM", g_scrollbar, "BOTTOM", 0, 0)
 scrollbar_track:SetWidth(4)
+end
 
-scrollbar_thumb = CreateFrame("Frame", nil, scrollbar)
-scrollbar_thumb:SetWidth(8)
-scrollbar_thumb:EnableMouse(true)
-scrollbar_thumb.background = snap_texture(
-    scrollbar_thumb:CreateTexture(nil, "ARTWORK")
+g_scrollbar_thumb = CreateFrame("Frame", nil, g_scrollbar)
+g_scrollbar_thumb:SetWidth(8)
+g_scrollbar_thumb:EnableMouse(true)
+g_scrollbar_thumb.background = snap_texture(
+    g_scrollbar_thumb:CreateTexture(nil, "ARTWORK")
 )
-scrollbar_thumb.background:SetAllPoints(scrollbar_thumb)
-scrollbar_thumb.background:SetColorTexture(
+g_scrollbar_thumb.background:SetAllPoints(g_scrollbar_thumb)
+g_scrollbar_thumb.background:SetColorTexture(
     COLORS.muted[1],
     COLORS.muted[2],
     COLORS.muted[3],
     1
 )
-scrollbar_thumb:SetAlpha(1)
+g_scrollbar_thumb:SetAlpha(1)
 
-for index = 1, ROW_COUNT do
-    rows[index] = create_row()
+-- Row construction helpers are scoped to this block: they are only needed
+-- while the pooled rows are built.
+do
+local function create_slant_text(parent, text, x, y)
+    local label = make_text(parent, FONT_META, text, COLORS.muted)
+    label:SetAlpha(0.8)
+    label:SetPoint("CENTER", parent, "LEFT", x, y or 0)
+    return label
 end
 
-local detail_separator = snap_texture(frame:CreateTexture(nil, "ARTWORK"))
-detail_separator:SetColorTexture(
+local function create_gauge(parent)
+    local gauge = CreateFrame("Frame", nil, parent)
+    gauge:SetSize(GAUGE_WIDTH, METRICS.gauge_height)
+
+    local track = snap_texture(gauge:CreateTexture(nil, "ARTWORK"))
+    track:SetColorTexture(
+        COLORS.border[1],
+        COLORS.border[2],
+        COLORS.border[3],
+        1
+    )
+    track:SetHeight(1)
+    track:SetPoint("LEFT", gauge, "LEFT", 0, 0)
+    track:SetPoint("RIGHT", gauge, "RIGHT", 0, 0)
+
+    local function make_mark(width, height, color)
+        local mark = snap_texture(gauge:CreateTexture(nil, "ARTWORK"))
+        mark:SetColorTexture(color[1], color[2], color[3], 1)
+        mark:SetSize(width, height)
+        mark:Hide()
+        return mark
+    end
+
+    local help_min = make_mark(1, 3, COLORS.muted)
+    local help_max = make_mark(1, 3, COLORS.muted)
+    local observed_min = make_mark(1, 6, COLORS.observed)
+    local observed_max = make_mark(1, 6, COLORS.observed)
+    local cursor = make_mark(2, 8, COLORS.text)
+    local clamp_mark = make_mark(2, 8, COLORS.warning)
+    local dot = make_mark(2, 2, COLORS.dot)
+    dot:SetPoint("CENTER", gauge, "CENTER", 0, 0)
+
+    local open_left = create_slant_text(gauge, "/", 0, 0)
+    local open_right = create_slant_text(gauge, "\\", GAUGE_WIDTH, 0)
+    open_left:Hide()
+    open_right:Hide()
+
+    return {
+        frame = gauge,
+        track = track,
+        help_min = help_min,
+        help_max = help_max,
+        observed_min = observed_min,
+        observed_max = observed_max,
+        cursor = cursor,
+        clamp = clamp_mark,
+        dot = dot,
+        open_left = open_left,
+        open_right = open_right,
+    }
+end
+
+local function create_row()
+    local row = CreateFrame("Button", nil, g_scroll_child)
+    row:SetHeight(ROW_HEIGHT)
+    row:EnableMouse(true)
+
+    local hover = snap_texture(row:CreateTexture(nil, "BACKGROUND"))
+    hover:SetAllPoints(row)
+    hover:SetColorTexture(
+        COLORS.hover[1],
+        COLORS.hover[2],
+        COLORS.hover[3],
+        1
+    )
+    hover:Hide()
+
+    local selected_background = snap_texture(row:CreateTexture(nil, "BACKGROUND"))
+    selected_background:SetAllPoints(row)
+    selected_background:SetColorTexture(
+        COLORS.accent[1],
+        COLORS.accent[2],
+        COLORS.accent[3],
+        0.14
+    )
+    selected_background:Hide()
+
+    local selected_bar = snap_texture(row:CreateTexture(nil, "ARTWORK"))
+    selected_bar:SetColorTexture(
+        COLORS.accent[1],
+        COLORS.accent[2],
+        COLORS.accent[3],
+        1
+    )
+    selected_bar:SetWidth(2)
+    selected_bar:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+    selected_bar:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+    selected_bar:Hide()
+
+    local name_text = make_text(row, FONT_BODY, "", COLORS.text)
+    name_text:SetPoint("LEFT", row, "LEFT", 6, 0)
+    name_text:SetWidth(300)
+    name_text:SetJustifyH("LEFT")
+    name_text:SetWordWrap(false)
+
+    local gauge = create_gauge(row)
+    gauge.frame:SetPoint("CENTER", row, "CENTER", 0, 0)
+
+    local value_text = make_text(row, FONT_BODY, "", COLORS.text)
+    value_text:SetPoint("RIGHT", row, "RIGHT", -6, 0)
+    value_text:SetWidth(300)
+    value_text:SetJustifyH("RIGHT")
+    value_text:SetWordWrap(false)
+
+    row.hover = hover
+    row.selected_background = selected_background
+    row.selected_bar = selected_bar
+    row.name_text = name_text
+    row.value_text = value_text
+    row.gauge = gauge
+    return row
+end
+
+for index = 1, ROW_COUNT do
+    g_rows[index] = create_row()
+end
+end
+
+local g_detail_separator = snap_texture(g_frame:CreateTexture(nil, "ARTWORK"))
+g_detail_separator:SetColorTexture(
     COLORS.border[1],
     COLORS.border[2],
     COLORS.border[3],
     1
 )
-detail_separator:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -496)
-detail_separator:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -496)
-hairline.register(detail_separator, "height")
-frame.snap_lines = { titlebar, header, detail_separator }
+g_detail_separator:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 24, -496)
+g_detail_separator:SetPoint("TOPRIGHT", g_frame, "TOPRIGHT", -24, -496)
+g_hairline.register(g_detail_separator, "height")
+g_frame.snap_lines[#g_frame.snap_lines + 1] = g_detail_separator
 
-detail = CreateFrame("Frame", nil, frame)
-detail:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -504)
-detail:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -24, 44)
+g_detail = CreateFrame("Frame", nil, g_frame)
+g_detail:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 24, -504)
+g_detail:SetPoint("BOTTOMRIGHT", g_frame, "BOTTOMRIGHT", -24, 44)
 
-detail_name = make_text(detail, FONT_DETAIL, "", COLORS.text)
-detail_name:SetPoint("TOPLEFT", detail, "TOPLEFT", 0, 0)
-detail_name:SetWidth(DETAIL_WIDTH)
-detail_name:SetJustifyH("LEFT")
-detail_name:SetWordWrap(false)
+g_detail_name = make_text(g_detail, FONT_DETAIL, "", COLORS.text)
+g_detail_name:SetPoint("TOPLEFT", g_detail, "TOPLEFT", 0, 0)
+g_detail_name:SetWidth(METRICS.detail_width)
+g_detail_name:SetJustifyH("LEFT")
+g_detail_name:SetWordWrap(false)
 
-detail_meta = CreateFrame("Frame", nil, detail)
-detail_meta:SetPoint("TOPLEFT", detail_name, "BOTTOMLEFT", 0, -3)
-detail_meta:SetSize(DETAIL_WIDTH, 14)
+g_detail_meta = CreateFrame("Frame", nil, g_detail)
+g_detail_meta:SetPoint("TOPLEFT", g_detail_name, "BOTTOMLEFT", 0, -3)
+g_detail_meta:SetSize(METRICS.detail_width, 14)
+
+do
+local function create_meta_part(parent)
+    local part = make_text(parent, FONT_META, "", COLORS.muted)
+    part:SetWordWrap(false)
+    part:Hide()
+    return part
+end
+
+local function create_meta_separator(parent)
+    local separator = snap_texture(parent:CreateTexture(nil, "ARTWORK"))
+    separator:SetColorTexture(
+        COLORS.border[1],
+        COLORS.border[2],
+        COLORS.border[3],
+        0.7
+    )
+    g_hairline.register(separator, "width")
+    separator:SetHeight(11)
+    separator:Hide()
+    return separator
+end
 
 for index = 1, META_MAX_PARTS do
-    detail_meta_parts[index] = create_meta_part(detail_meta)
+    g_detail_meta_parts[index] = create_meta_part(g_detail_meta)
     if index > 1 then
-        detail_meta_separators[index - 1] = create_meta_separator(detail_meta)
+        g_detail_meta_separators[index - 1] = create_meta_separator(g_detail_meta)
     end
 end
-
-detail_help = make_text(detail, FONT_BODY, "", COLORS.text)
-detail_help:SetPoint("TOPLEFT", detail_meta, "BOTTOMLEFT", 0, -4)
-detail_help:SetWidth(DETAIL_WIDTH)
-detail_help:SetJustifyH("LEFT")
-detail_help:SetWordWrap(true)
-if detail_help.SetMaxLines then
-    detail_help:SetMaxLines(2)
 end
-detail_help:Hide()
 
-detail_edit_frame = CreateFrame("Frame", nil, detail)
-detail_edit_frame:SetSize(340, 30)
-detail_edit_frame:SetPoint("BOTTOMLEFT", detail, "BOTTOMLEFT", 0, 0)
-detail_edit_frame.background = detail_edit_frame:CreateTexture(
+g_detail_help = make_text(g_detail, FONT_BODY, "", COLORS.text)
+g_detail_help:SetPoint("TOPLEFT", g_detail_meta, "BOTTOMLEFT", 0, -4)
+g_detail_help:SetWidth(METRICS.detail_width)
+g_detail_help:SetJustifyH("LEFT")
+g_detail_help:SetWordWrap(true)
+if g_detail_help.SetMaxLines then
+    g_detail_help:SetMaxLines(2)
+end
+g_detail_help:Hide()
+
+g_detail_edit_frame = CreateFrame("Frame", nil, g_detail)
+g_detail_edit_frame:SetSize(340, 30)
+g_detail_edit_frame:SetPoint("BOTTOMLEFT", g_detail, "BOTTOMLEFT", 0, 0)
+g_detail_edit_frame.background = g_detail_edit_frame:CreateTexture(
     nil,
     "BACKGROUND"
 )
-detail_edit_frame.background:SetAllPoints(detail_edit_frame)
-detail_edit_frame.background:SetColorTexture(
+g_detail_edit_frame.background:SetAllPoints(g_detail_edit_frame)
+g_detail_edit_frame.background:SetColorTexture(
     COLORS.surface[1],
     COLORS.surface[2],
     COLORS.surface[3],
     1
 )
-detail_edit_frame.borders = add_border(detail_edit_frame, COLORS.border)
+g_detail_edit_frame.borders = add_border(g_detail_edit_frame, COLORS.border)
 
-detail_edit = CreateFrame("EditBox", nil, detail_edit_frame)
-detail_edit:SetPoint("TOPLEFT", detail_edit_frame, "TOPLEFT", 10, 0)
-detail_edit:SetPoint("BOTTOMRIGHT", detail_edit_frame, "BOTTOMRIGHT", -10, 0)
-detail_edit:SetAutoFocus(false)
-detail_edit:SetFontObject(FONT_BODY)
-detail_edit:SetTextColor(
+g_detail_edit = CreateFrame("EditBox", nil, g_detail_edit_frame)
+g_detail_edit:SetPoint("TOPLEFT", g_detail_edit_frame, "TOPLEFT", 10, 0)
+g_detail_edit:SetPoint("BOTTOMRIGHT", g_detail_edit_frame, "BOTTOMRIGHT", -10, 0)
+g_detail_edit:SetAutoFocus(false)
+g_detail_edit:SetFontObject(FONT_BODY)
+g_detail_edit:SetTextColor(
     COLORS.text[1],
     COLORS.text[2],
     COLORS.text[3],
     1
 )
-detail_edit:SetTextInsets(2, 2, 2, 2)
+g_detail_edit:SetTextInsets(2, 2, 2, 2)
 
-set_button = create_button(detail, "Set", 64, 30)
-set_button:SetPoint("LEFT", detail_edit_frame, "RIGHT", 8, 0)
+g_set_button = create_button(g_detail, "Set", 64, 30)
+g_set_button:SetPoint("LEFT", g_detail_edit_frame, "RIGHT", 8, 0)
 
-reset_button = create_button(detail, "Reset to default", 132, 30)
-reset_button:SetPoint("LEFT", set_button, "RIGHT", 8, 0)
+g_reset_button = create_button(g_detail, "Reset to default", 132, 30)
+g_reset_button:SetPoint("LEFT", g_set_button, "RIGHT", 8, 0)
 
-detail_status = make_text(detail, FONT_META, "", COLORS.success)
-detail_status:SetPoint("LEFT", reset_button, "RIGHT", 12, 0)
-detail_status:SetWidth(300)
-detail_status:SetJustifyH("LEFT")
-detail_status:SetWordWrap(false)
+g_detail_status = make_text(g_detail, FONT_META, "", COLORS.success)
+g_detail_status:SetPoint("LEFT", g_reset_button, "RIGHT", 12, 0)
+g_detail_status:SetWidth(300)
+g_detail_status:SetJustifyH("LEFT")
+g_detail_status:SetWordWrap(false)
 
-key = CreateFrame("Frame", nil, frame)
-key:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 24, 14)
-key:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -24, 14)
-key:SetHeight(20)
+g_key = CreateFrame("Frame", nil, g_frame)
+g_key:SetPoint("BOTTOMLEFT", g_frame, "BOTTOMLEFT", 24, 14)
+g_key:SetPoint("BOTTOMRIGHT", g_frame, "BOTTOMRIGHT", -24, 14)
+g_key:SetHeight(20)
 do
-local key_border = snap_texture(key:CreateTexture(nil, "ARTWORK"))
+local key_border = snap_texture(g_key:CreateTexture(nil, "ARTWORK"))
 key_border:SetColorTexture(
     COLORS.border[1],
     COLORS.border[2],
     COLORS.border[3],
     1
 )
-key_border:SetPoint("TOPLEFT", key, "TOPLEFT", 0, 0)
-key_border:SetPoint("TOPRIGHT", key, "TOPRIGHT", 0, 0)
-hairline.register(key_border, "height")
+key_border:SetPoint("TOPLEFT", g_key, "TOPLEFT", 0, 0)
+key_border:SetPoint("TOPRIGHT", g_key, "TOPRIGHT", 0, 0)
+g_hairline.register(key_border, "height")
 end
 
-local changed_key = make_text(
-    key,
-    FONT_META,
-    "Differs from default",
-    COLORS.changed
-)
-local observed_mark = create_observed_ticks(key)
-local observed_label = make_text(
-    key,
-    FONT_META,
-    "Observed bounds",
-    COLORS.muted
-)
-local readonly_mark = create_readonly_mark(key)
-local readonly_label = make_text(
-    key,
-    FONT_META,
-    "Read-only",
-    COLORS.muted
-)
-local current_mark = create_current_mark(key)
-local current_label = make_text(
-    key,
-    FONT_META,
-    "Current value",
-    COLORS.muted
-)
-hint = create_hint(key)
+-- Semantic key and hint: construction helpers stay scoped to this block;
+-- apply_ui_scale re-runs g_frame.layout_key_row after font resizes.
+do
+local function create_slant_marks(parent)
+    local marks = CreateFrame("Frame", nil, parent)
+    marks:SetSize(14, 8)
+    marks.left = make_text(marks, FONT_META, "/", COLORS.muted)
+    marks.left:SetAlpha(0.8)
+    marks.left:SetPoint("CENTER", marks, "LEFT", 3, 0)
+    marks.right = make_text(marks, FONT_META, "\\", COLORS.muted)
+    marks.right:SetAlpha(0.8)
+    marks.right:SetPoint("CENTER", marks, "LEFT", 11, 0)
+    return marks
+end
 
--- Flow layout of the semantic key: 8px mark-to-label, 16px between
--- entries. Re-run after font resizes so measured advances never drift
--- from rendered text.
-local function layout_key_row()
+local function create_dot(parent)
+    local dot = snap_texture(parent:CreateTexture(nil, "ARTWORK"))
+    dot:SetColorTexture(
+        COLORS.dot[1],
+        COLORS.dot[2],
+        COLORS.dot[3],
+        1
+    )
+    dot:SetSize(2, 2)
+    return dot
+end
+
+local function create_readonly_mark(parent)
+    local mark = CreateFrame("Frame", nil, parent)
+    mark:SetSize(9, 9)
+    -- Full-span outline: the left/right lines run the mark's full height
+    -- and the top/bottom lines its full width, so both draw each corner
+    -- (solid color; the overlap is invisible). add_border's butt joints,
+    -- with the vertical lines inset by their 1px thickness, left this
+    -- small box's side lines 1px short in-game.
+    local top = snap_texture(mark:CreateTexture(nil, "BORDER"))
+    top:SetColorTexture(
+        COLORS.muted[1],
+        COLORS.muted[2],
+        COLORS.muted[3],
+        1
+    )
+    top:SetPoint("TOPLEFT", mark, "TOPLEFT", 0, 0)
+    top:SetPoint("TOPRIGHT", mark, "TOPRIGHT", 0, 0)
+    g_hairline.register(top, "height", mark)
+
+    local bottom = snap_texture(mark:CreateTexture(nil, "BORDER"))
+    bottom:SetColorTexture(
+        COLORS.muted[1],
+        COLORS.muted[2],
+        COLORS.muted[3],
+        1
+    )
+    bottom:SetPoint("BOTTOMLEFT", mark, "BOTTOMLEFT", 0, 0)
+    bottom:SetPoint("BOTTOMRIGHT", mark, "BOTTOMRIGHT", 0, 0)
+    g_hairline.register(bottom, "height", mark)
+
+    local left = snap_texture(mark:CreateTexture(nil, "BORDER"))
+    left:SetColorTexture(
+        COLORS.muted[1],
+        COLORS.muted[2],
+        COLORS.muted[3],
+        1
+    )
+    left:SetPoint("TOPLEFT", mark, "TOPLEFT", 0, 0)
+    left:SetPoint("BOTTOMLEFT", mark, "BOTTOMLEFT", 0, 0)
+    g_hairline.register(left, "width", mark)
+
+    local right = snap_texture(mark:CreateTexture(nil, "BORDER"))
+    right:SetColorTexture(
+        COLORS.muted[1],
+        COLORS.muted[2],
+        COLORS.muted[3],
+        1
+    )
+    right:SetPoint("TOPRIGHT", mark, "TOPRIGHT", 0, 0)
+    right:SetPoint("BOTTOMRIGHT", mark, "BOTTOMRIGHT", 0, 0)
+    g_hairline.register(right, "width", mark)
+    return mark
+end
+
+local function create_observed_ticks(parent)
+    local mark = CreateFrame("Frame", nil, parent)
+    mark:SetSize(12, 8)
+    local first = mark:CreateTexture(nil, "ARTWORK")
+    first:SetColorTexture(
+        COLORS.observed[1],
+        COLORS.observed[2],
+        COLORS.observed[3],
+        1
+    )
+    first:SetSize(1, 6)
+    first:SetPoint("LEFT", mark, "LEFT", 0, 0)
+    local second = mark:CreateTexture(nil, "ARTWORK")
+    second:SetColorTexture(
+        COLORS.observed[1],
+        COLORS.observed[2],
+        COLORS.observed[3],
+        1
+    )
+    second:SetSize(1, 6)
+    second:SetPoint("LEFT", mark, "LEFT", 10, 0)
+    return mark
+end
+
+local function create_current_mark(parent)
+    local mark = CreateFrame("Frame", nil, parent)
+    mark:SetSize(2, 8)
+    local line = mark:CreateTexture(nil, "ARTWORK")
+    line:SetAllPoints(mark)
+    line:SetColorTexture(
+        COLORS.text[1],
+        COLORS.text[2],
+        COLORS.text[3],
+        1
+    )
+    return mark
+end
+
+-- Flow layout of the hint marks: 4px margins on both sides of the slant
+-- group and the dot (the mockup's .key-dot margin). Re-run after font
+-- resizes so measured advances never drift from rendered text.
+local function layout_hint(hint_frame)
+    local x = 0
+    hint_frame.first:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
+    x = round(x + hint_frame.first:GetStringWidth()) + 4
+    hint_frame.slants:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
+    x = round(x + 14) + 4
+    hint_frame.second:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
+    x = round(x + hint_frame.second:GetStringWidth()) + 4
+    hint_frame.dot:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
+    x = round(x + 2) + 4
+    hint_frame.third:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
+    x = round(x + hint_frame.third:GetStringWidth())
+    hint_frame:SetWidth(x)
+end
+
+local function create_hint(parent)
+    local hint_frame = CreateFrame("Frame", nil, parent)
+    hint_frame:SetHeight(20)
+    hint_frame.first = make_text(
+        hint_frame,
+        FONT_META,
+        "Slanted end",
+        COLORS.muted
+    )
+    hint_frame.slants = create_slant_marks(hint_frame)
+    hint_frame.second = make_text(
+        hint_frame,
+        FONT_META,
+        "means no limit. Dot",
+        COLORS.muted
+    )
+    hint_frame.dot = create_dot(hint_frame)
+    hint_frame.third = make_text(
+        hint_frame,
+        FONT_META,
+        "means no known range.",
+        COLORS.muted
+    )
+    hint_frame:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
+    layout_hint(hint_frame)
+    return hint_frame
+end
+
+-- Semantic key entries in flow order: { region, fixed width or nil to
+-- measure the text, gap after }. 8px mark-to-label, 16px between entries.
+local key_items = {
+    { make_text(g_key, FONT_META, "Differs from default", COLORS.changed), nil, 16 },
+    { create_observed_ticks(g_key), 12, 8 },
+    { make_text(g_key, FONT_META, "Observed bounds", COLORS.muted), nil, 16 },
+    { create_readonly_mark(g_key), 9, 8 },
+    { make_text(g_key, FONT_META, "Read-only", COLORS.muted), nil, 16 },
+    { create_current_mark(g_key), 2, 8 },
+    { make_text(g_key, FONT_META, "Current value", COLORS.muted), nil, 0 },
+}
+local hint = create_hint(g_key)
+
+-- Re-run after font resizes so measured advances never drift from
+-- rendered text.
+g_frame.layout_key_row = function()
     local key_x = 0
-    changed_key:SetPoint("LEFT", key, "LEFT", key_x, 0)
-    key_x = snap(key_x + changed_key:GetStringWidth()) + 16
-
-    observed_mark:SetPoint("LEFT", key, "LEFT", key_x, 0)
-    key_x = snap(key_x + 12) + 8
-    observed_label:SetPoint("LEFT", key, "LEFT", key_x, 0)
-    key_x = snap(key_x + observed_label:GetStringWidth()) + 16
-
-    readonly_mark:SetPoint("LEFT", key, "LEFT", key_x, 0)
-    key_x = snap(key_x + 9) + 8
-    readonly_label:SetPoint("LEFT", key, "LEFT", key_x, 0)
-    key_x = snap(key_x + readonly_label:GetStringWidth()) + 16
-
-    current_mark:SetPoint("LEFT", key, "LEFT", key_x, 0)
-    key_x = snap(key_x + 2) + 8
-    current_label:SetPoint("LEFT", key, "LEFT", key_x, 0)
-
+    for index = 1, #key_items do
+        local item = key_items[index]
+        local region = item[1]
+        region:SetPoint("LEFT", g_key, "LEFT", key_x, 0)
+        key_x = round(key_x + (item[2] or region:GetStringWidth())) + item[3]
+    end
     layout_hint(hint)
 end
-layout_key_row()
-
-scale_popup = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-scale_popup:SetSize(126, #LAYOUT_OPTIONS * 22 + 2)
-scale_popup:SetPoint("TOPRIGHT", scale_button, "BOTTOMRIGHT", 0, -4)
-scale_popup:SetFrameLevel(frame:GetFrameLevel() + 20)
-apply_backdrop(scale_popup, COLORS.surface, COLORS.border)
-scale_popup:Hide()
-if frame.snap_boxes then
-    frame.snap_boxes[#frame.snap_boxes + 1] = scale_popup
+g_frame.layout_key_row()
 end
 
+g_scale_popup = CreateFrame("Frame", nil, g_frame, "BackdropTemplate")
+g_scale_popup:SetSize(126, #LAYOUT_OPTIONS * 22 + 2)
+g_scale_popup:SetPoint("TOPRIGHT", g_scale_button, "BOTTOMRIGHT", 0, -4)
+g_scale_popup:SetFrameLevel(g_frame:GetFrameLevel() + 20)
+apply_backdrop(g_scale_popup, COLORS.surface, COLORS.border)
+g_scale_popup:Hide()
+-- The detail controls are created after the chips block, so they join the
+-- snap list here once they exist.
+g_frame.snap_boxes[#g_frame.snap_boxes + 1] = g_detail_edit_frame
+g_frame.snap_boxes[#g_frame.snap_boxes + 1] = g_set_button
+g_frame.snap_boxes[#g_frame.snap_boxes + 1] = g_reset_button
+g_frame.snap_boxes[#g_frame.snap_boxes + 1] = g_scale_popup
+
 for index, option in ipairs(LAYOUT_OPTIONS) do
-    local row = CreateFrame("Button", nil, scale_popup)
+    local row = CreateFrame("Button", nil, g_scale_popup)
     row:SetSize(124, 22)
     row:SetPoint(
         "TOPLEFT",
-        scale_popup,
+        g_scale_popup,
         "TOPLEFT",
         1,
         -(1 + (index - 1) * 22)
@@ -2878,11 +2852,11 @@ for index, option in ipairs(LAYOUT_OPTIONS) do
     row:SetScript("OnLeave", function(self)
         self.hover:Hide()
     end)
-    scale_rows[#scale_rows + 1] = row
+    g_scale_rows[#g_scale_rows + 1] = row
 end
 
 local function resolve_layout()
-    local preset_key = db and db.preset or "auto"
+    local preset_key = g_db and g_db.preset or "auto"
     if preset_key ~= "auto" and LAYOUT_PRESETS[preset_key] then
         return LAYOUT_PRESETS[preset_key], preset_key
     end
@@ -2899,14 +2873,14 @@ local function resolve_layout()
 end
 
 local function update_scale_button()
-    local preset_key = db and db.preset or "auto"
+    local preset_key = g_db and g_db.preset or "auto"
     local label = "Auto"
     if preset_key ~= "auto" and LAYOUT_PRESETS[preset_key] then
         label = preset_key:sub(1, 1):upper() .. preset_key:sub(2)
     end
-    scale_button.label:SetText("Size: " .. label)
-    scale_button:SetWidth(max(72, snap(scale_button.label:GetStringWidth() + 10)))
-    for _, row in ipairs(scale_rows) do
+    g_scale_button.label:SetText("Size: " .. label)
+    g_scale_button:SetWidth(max(72, round(g_scale_button.label:GetStringWidth() + 10)))
+    for _, row in ipairs(g_scale_rows) do
         if row.option.value == preset_key then
             row.label:SetTextColor(
                 COLORS.accent[1],
@@ -2932,17 +2906,17 @@ end
 -- one screen unit is physicalHeight/768 pixels. Measuring catches clients
 -- that compose the parent's scale into the frame despite
 -- SetIgnoreParentScale, where one unit renders at parentScale pixels.
-frame.measure_px_per_unit = function(physical_height)
-    if not frame.GetScaledRect then
+g_frame.measure_px_per_unit = function(physical_height)
+    if not g_frame.GetScaledRect then
         return nil
     end
-    if not frame.px_probe then
-        frame.px_probe = frame:CreateTexture(nil, "ARTWORK")
-        frame.px_probe:Hide()
+    if not g_frame.px_probe then
+        g_frame.px_probe = g_frame:CreateTexture(nil, "ARTWORK")
+        g_frame.px_probe:Hide()
     end
-    local probe = frame.px_probe
+    local probe = g_frame.px_probe
     probe:ClearAllPoints()
-    probe:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    probe:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 0, 0)
     probe:SetWidth(100)
     probe:SetHeight(100)
     probe:Show()
@@ -2958,9 +2932,9 @@ end
 
 -- Snug label fit: 4px text padding from the outline on each side, with a
 -- caller-supplied floor so tiny buttons never collapse absurdly narrow.
--- A frame field (not a local) because the main chunk is at Lua 5.1's
--- 200-local limit. Re-run after font resizes.
-frame.fit_text_button = function(button, minimum)
+-- A frame field (not a local) to keep main-chunk register headroom.
+-- Re-run after font resizes.
+g_frame.fit_text_button = function(button, minimum)
     if not button or not button.label then
         return
     end
@@ -2968,78 +2942,97 @@ frame.fit_text_button = function(button, minimum)
     if minimum and minimum > width then
         width = minimum
     end
-    button:SetWidth(snap(width))
+    button:SetWidth(round(width))
 end
 
 -- Snaps every texture rect in the tree to the pixel grid at rest so edges
--- stay one physical pixel. Text is deliberately not snapped: fonts are
--- monospace at integer sizes, so glyph interiors stay pixel-stable at
--- fractional origins, while snapping would shift labels out of their
--- padding and break alignment.
-frame.snap_region_tree = function(region)
+-- stay one physical pixel, and moves single-anchor text origins onto whole
+-- pixels. Text left at a half-pixel offset (centered or right-anchored
+-- labels with odd/fractional widths) rounds either way depending on the
+-- frame's absolute position, so it shifted 1px while dragging (seen in
+-- game on the "Value" header). The shift here is under half a pixel, so
+-- padding is unaffected. Each snap starts from the label's design offset
+-- (remembered unless code re-anchored it since), so repeated relayouts
+-- with changing text never accumulate drift. Multi-anchor text is left
+-- alone: snap_box only rewrites the first anchor.
+g_frame.snap_region_tree = function(region)
     if region.GetChildren then
         for _, child in ipairs({ region:GetChildren() }) do
-            frame.snap_region_tree(child)
+            g_frame.snap_region_tree(child)
         end
     end
-    if not region.GetRegions or not frame.snap_box then
+    if not region.GetRegions then
         return
     end
     for _, sub in ipairs({ region:GetRegions() }) do
-        if sub:GetObjectType() == "Texture" then
+        local kind = sub:GetObjectType()
+        if kind == "Texture" then
             if sub.GetNumPoints and sub:GetNumPoints() > 1 then
-                frame.snap_line(sub)
+                g_frame.snap_line(sub)
             else
-                frame.snap_box(sub)
+                g_frame.snap_box(sub)
             end
+        elseif kind == "FontString" and sub:GetNumPoints() == 1 then
+            local point, relative_to, relative_point, x, y = sub:GetPoint(1)
+            local last = sub.text_snap
+            if last and last.x == x and last.y == y then
+                x, y = last.base_x, last.base_y
+                sub:SetPoint(point, relative_to, relative_point, x, y)
+            end
+            g_frame.snap_box(sub)
+            local _, _, _, snapped_x, snapped_y = sub:GetPoint(1)
+            sub.text_snap = {
+                base_x = x or 0,
+                base_y = y or 0,
+                x = snapped_x,
+                y = snapped_y,
+            }
         end
     end
 end
 
 local function snap_frame_position()
-    if not frame or not frame:IsShown() then
+    if not g_frame or not g_frame:IsShown() then
         return
     end
     -- Snap the frame's physical-pixel origin to the nearest whole pixel by
     -- shifting the anchor, then re-measure and mop up any residual. GetLeft/
-    -- GetTop are frame units, so SCALE.pixel (physical px per frame unit)
-    -- converts them to pixels, and the correction converts back into
-    -- UIParent-unit anchor space through SCALE.snap (physical px per
-    -- UIParent-unit offset). Landing the origin on a whole pixel keeps
-    -- 1-unit hairlines on exactly one pixel and the font raster phase
-    -- stable; a fractional phase is what made the header text drift between
-    -- 1px and 2px above the separator after a drag release. GetScaledRect is
-    -- not usable here: it returns 768-space screen units (GetRect times
-    -- effective scale), not pixels, and its second return is the bottom edge.
+    -- GetTop and SetPoint offsets are both frame units (verified in game:
+    -- +10 offset moved GetLeft by exactly 10 with UIParent at 1.556 px per
+    -- unit), so SCALE.pixel converts both ways. Landing the origin on a
+    -- whole pixel keeps 1-unit hairlines on exactly one pixel and the font
+    -- raster phase stable; a fractional phase is what made the header text
+    -- drift between 1px and 2px above the separator after a drag release.
+    -- GetScaledRect is not usable here: it returns 768-space screen units
+    -- (GetRect times effective scale), not pixels, and its second return is
+    -- the bottom edge.
     local px_per_unit = SCALE.pixel
-    local px_per_parent_unit = SCALE.snap
-    if not px_per_unit or px_per_unit <= 0
-        or not px_per_parent_unit or px_per_parent_unit <= 0 then
+    if not px_per_unit or px_per_unit <= 0 then
         return
     end
-    local point, relative_to, relative_point, x, y = frame:GetPoint(1)
+    local point, relative_to, relative_point, x, y = g_frame:GetPoint(1)
     if not point then
         return
     end
     x = x or 0
     y = y or 0
     for _ = 1, 2 do
-        local left = frame:GetLeft()
-        local top = frame:GetTop()
+        local left = g_frame:GetLeft()
+        local top = g_frame:GetTop()
         if not left or not top then
             return
         end
         local left_px = left * px_per_unit
         local top_px = top * px_per_unit
-        local dx_px = floor(left_px + 0.5) - left_px
-        local dy_px = floor(top_px + 0.5) - top_px
+        local dx_px = round(left_px) - left_px
+        local dy_px = round(top_px) - top_px
         if abs(dx_px) < 0.001 and abs(dy_px) < 0.001 then
             break
         end
-        x = x + dx_px / px_per_parent_unit
-        y = y + dy_px / px_per_parent_unit
-        frame:ClearAllPoints()
-        frame:SetPoint(
+        x = x + dx_px / px_per_unit
+        y = y + dy_px / px_per_unit
+        g_frame:ClearAllPoints()
+        g_frame:SetPoint(
             point,
             relative_to or UIParent,
             relative_point or "CENTER",
@@ -3047,16 +3040,16 @@ local function snap_frame_position()
             y
         )
     end
-    if db then
-        db.x = x
-        db.y = y
+    if g_db then
+        g_db.x = x
+        g_db.y = y
     end
 end
 
 local function apply_ui_scale()
     local preset = resolve_layout()
-    if frame.SetIgnoreParentScale then
-        frame:SetIgnoreParentScale(true)
+    if g_frame.SetIgnoreParentScale then
+        g_frame:SetIgnoreParentScale(true)
     end
     local _, physical_height = GetPhysicalScreenSize()
     if not physical_height or physical_height <= 0 then
@@ -3071,25 +3064,18 @@ local function apply_ui_scale()
     -- (scale composition is multiplicative, so one corrective pass
     -- converges).
     local perfect_scale = 768 / physical_height
-    frame:SetScale(perfect_scale)
-    local px_per_unit = frame.measure_px_per_unit(physical_height)
+    g_frame:SetScale(perfect_scale)
+    local px_per_unit = g_frame.measure_px_per_unit(physical_height)
     if px_per_unit and px_per_unit > 0 and abs(px_per_unit - 1) > 1e-3 then
-        frame:SetScale((frame:GetScale() or perfect_scale) / px_per_unit)
-        px_per_unit = frame.measure_px_per_unit(physical_height) or px_per_unit
+        g_frame:SetScale((g_frame:GetScale() or perfect_scale) / px_per_unit)
+        px_per_unit = g_frame.measure_px_per_unit(physical_height) or px_per_unit
     end
     if not px_per_unit or px_per_unit <= 0 then
         px_per_unit = 1
     end
     -- Measured physical px per frame unit (~1.0 after compensation).
     SCALE.pixel = px_per_unit
-    -- Cursor screen units to frame units: one screen unit is height/768 px.
-    SCALE.drag = physical_height / 768 / px_per_unit
-    -- Physical px per UIParent-unit anchor offset (SetPoint offsets on the
-    -- frame live in UIParent units). Exact from UIParent's own effective
-    -- scale; the old parent:child ratio was only correct while the frame
-    -- scale formula above was honored verbatim.
-    SCALE.snap = (UIParent:GetEffectiveScale() or 1) * physical_height / 768
-    frame:SetSize(preset.width, preset.height)
+    g_frame:SetSize(preset.width, preset.height)
 
     resize_font(FONT_TITLE, FONT_SEMIBOLD_PATH, preset.title)
     resize_font(FONT_DETAIL, FONT_SEMIBOLD_PATH, preset.detail)
@@ -3100,150 +3086,137 @@ local function apply_ui_scale()
         MEDIA_PATH .. "Inter-SemiBold.ttf",
         preset.check
     )
-    layout_key_row()
+    g_frame.layout_key_row()
     -- Refit snug text buttons after font sizes settle: labels keep 4px
     -- padding from the outline on each side, with a small floor (roughly
     -- the button height) so tiny buttons never collapse absurdly narrow.
-    frame.fit_text_button(set_button, 30)
-    frame.fit_text_button(reset_button, 64)
-    frame.fit_text_button(frame.copy_button, 30)
-    frame.fit_text_button(frame.filter_clear, 40)
-    frame.fit_text_button(close_button, 24)
-    frame.fit_text_button(frame.undo_button, 24)
-    frame.fit_text_button(frame.redo_button, 24)
+    g_frame.fit_text_button(g_set_button, 30)
+    g_frame.fit_text_button(g_reset_button, 64)
+    g_frame.fit_text_button(g_frame.copy_button, 30)
+    g_frame.fit_text_button(g_frame.filter_clear, 40)
+    g_frame.fit_text_button(g_close_button, 24)
+    g_frame.fit_text_button(g_frame.undo_button, 24)
+    g_frame.fit_text_button(g_frame.redo_button, 24)
 
-    DETAIL_WIDTH = preset.width - 48
-    LIST_WIDTH = preset.width - LIST_LEFT - LIST_RIGHT
-    LIST_BOTTOM = preset.detail_height + 56
-    LIST_HEIGHT = preset.height - LIST_TOP - LIST_BOTTOM
+    METRICS.detail_width = preset.width - 48
+    METRICS.list_width = preset.width - METRICS.list_left - METRICS.list_right
+    METRICS.list_bottom = preset.detail_height + 56
+    METRICS.list_height = preset.height - METRICS.list_top - METRICS.list_bottom
 
-    scroll_child:SetWidth(LIST_WIDTH)
-    scroll_frame:SetPoint(
+    g_scroll_child:SetWidth(METRICS.list_width)
+    g_scroll_frame:SetPoint(
         "BOTTOMRIGHT",
-        frame,
+        g_frame,
         "BOTTOMRIGHT",
-        -LIST_RIGHT,
-        LIST_BOTTOM
+        -METRICS.list_right,
+        METRICS.list_bottom
     )
-    scrollbar:SetPoint(
+    g_scrollbar:SetPoint(
         "BOTTOMRIGHT",
-        frame,
+        g_frame,
         "BOTTOMRIGHT",
         -24,
-        LIST_BOTTOM
+        METRICS.list_bottom
     )
 
     local separator_y = preset.height - preset.detail_height - 52
     local detail_y = preset.height - preset.detail_height - 44
-    detail_separator:ClearAllPoints()
-    detail_separator:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -separator_y)
-    detail_separator:SetPoint(
+    g_detail_separator:ClearAllPoints()
+    g_detail_separator:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 24, -separator_y)
+    g_detail_separator:SetPoint(
         "TOPRIGHT",
-        frame,
+        g_frame,
         "TOPRIGHT",
         -24,
         -separator_y
     )
-    detail:ClearAllPoints()
-    detail:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -detail_y)
-    detail:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -24, 44)
-    detail_name:SetWidth(DETAIL_WIDTH)
-    detail_help:SetWidth(DETAIL_WIDTH)
-    detail_meta:SetSize(DETAIL_WIDTH, 14)
-    detail_status:SetWidth(max(120, DETAIL_WIDTH - 554))
-    if frame.filter_popup then
-        frame.filter_popup:SetHeight(min(500, preset.height - 136))
-    end
+    g_detail:ClearAllPoints()
+    g_detail:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 24, -detail_y)
+    g_detail:SetPoint("BOTTOMRIGHT", g_frame, "BOTTOMRIGHT", -24, 44)
+    g_detail_name:SetWidth(METRICS.detail_width)
+    g_detail_help:SetWidth(METRICS.detail_width)
+    g_detail_meta:SetSize(METRICS.detail_width, 14)
+    g_detail_status:SetWidth(max(120, METRICS.detail_width - 554))
+    g_frame.filter_popup:SetHeight(min(500, preset.height - 136))
 
-    frame.update_filter_chip()
-    frame.update_sort_chip()
+    g_frame.update_filter_chip()
+    g_frame.update_sort_chip()
     update_scale_button()
-    -- Size every border to exactly one physical pixel via the measured
-    -- physical-px-per-unit (SCALE.pixel). GetScaledRect must not be used for
-    -- this: it returns 768-space screen units (GetRect times effective
-    -- scale), not pixels, which measured 768/height and drew hairlines at
+    -- Hairlines resize to exactly one physical pixel via the measured
+    -- physical-px-per-unit (SCALE.pixel, validated above). GetScaledRect
+    -- must not be used for this: it returns 768-space screen units (GetRect
+    -- times effective scale), not pixels, which drew hairlines at
     -- height/768 px (double thickness at common resolutions).
-    local px_per_unit = SCALE.pixel
-    if not px_per_unit or px_per_unit <= 0 then
-        px_per_unit = 1
-    end
-    hairline.set_scale(px_per_unit)
-    set_backdrop_edge_size(px_per_unit)
+    g_hairline.set_scale(SCALE.pixel)
     snap_frame_position()
-    if frame.snap_lines then
-        for _, region in ipairs(frame.snap_lines) do
-            frame.snap_line(region)
-        end
+    for _, region in ipairs(g_frame.snap_lines) do
+        g_frame.snap_line(region)
     end
-    if frame.snap_boxes then
-        for _, region in ipairs(frame.snap_boxes) do
-            frame.snap_box(region)
-        end
+    for _, region in ipairs(g_frame.snap_boxes) do
+        g_frame.snap_box(region)
     end
-    frame.snap_region_tree(frame)
+    g_frame.snap_region_tree(g_frame)
 end
 
 local function set_layout(value)
-    if db then
-        db.preset = value
+    if g_db then
+        g_db.preset = value
     end
     apply_ui_scale()
-    scale_popup:Hide()
+    g_scale_popup:Hide()
 end
 
 local function toggle_scale_popup()
-    if scale_popup:IsShown() then
-        scale_popup:Hide()
+    if g_scale_popup:IsShown() then
+        g_scale_popup:Hide()
     else
         update_scale_button()
-        scale_popup:Show()
-        if frame.snap_box then
-            frame.snap_box(scale_popup)
-        end
-        scale_popup:Raise()
+        g_scale_popup:Show()
+        g_frame.snap_box(g_scale_popup)
+        g_scale_popup:Raise()
     end
 end
 
 -- Minimap button -------------------------------------------------------------
 
 if Minimap then
-    frame.minimap_button = CreateFrame(
+    g_frame.minimap_button = CreateFrame(
         "Button",
         "CVarBrowserMinimapButton",
         Minimap
     )
-    frame.minimap_button:SetSize(32, 32)
-    frame.minimap_button:SetFrameStrata("MEDIUM")
-    frame.minimap_button:SetFrameLevel(Minimap:GetFrameLevel() + 8)
-    frame.minimap_button:RegisterForClicks("LeftButtonUp")
-    frame.minimap_button:RegisterForDrag("LeftButton")
-    frame.minimap_button:SetMovable(true)
+    g_frame.minimap_button:SetSize(32, 32)
+    g_frame.minimap_button:SetFrameStrata("MEDIUM")
+    g_frame.minimap_button:SetFrameLevel(Minimap:GetFrameLevel() + 8)
+    g_frame.minimap_button:RegisterForClicks("LeftButtonUp")
+    g_frame.minimap_button:RegisterForDrag("LeftButton")
+    g_frame.minimap_button:SetMovable(true)
 
-    frame.minimap_button.border = frame.minimap_button:CreateTexture(
+    g_frame.minimap_button.border = g_frame.minimap_button:CreateTexture(
         nil,
         "OVERLAY"
     )
-    frame.minimap_button.border:SetTexture(
+    g_frame.minimap_button.border:SetTexture(
         "Interface\\Minimap\\MiniMap-TrackingBorder"
     )
-    frame.minimap_button.border:SetSize(54, 54)
-    frame.minimap_button.border:SetPoint("TOPLEFT")
+    g_frame.minimap_button.border:SetSize(54, 54)
+    g_frame.minimap_button.border:SetPoint("TOPLEFT")
 
     -- Named <Button>Icon: minimap-button collectors (Leatrix Plus,
     -- Completao-style drawers, etc.) use this texture for their tile.
-    frame.minimap_button.icon = frame.minimap_button:CreateTexture(
+    g_frame.minimap_button.icon = g_frame.minimap_button:CreateTexture(
         "CVarBrowserMinimapButtonIcon",
         "ARTWORK"
     )
-    frame.minimap_button.icon:SetTexture(
+    g_frame.minimap_button.icon:SetTexture(
         "Interface\\Icons\\INV_Misc_Spyglass_02"
     )
-    frame.minimap_button.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
-    frame.minimap_button.icon:SetSize(20, 20)
-    frame.minimap_button.icon:SetPoint("CENTER")
+    g_frame.minimap_button.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    g_frame.minimap_button.icon:SetSize(20, 20)
+    g_frame.minimap_button.icon:SetPoint("CENTER")
 
-    frame.minimap_button.update_position = function(self)
-        local angle = math.rad(db and db.minimap_angle or 220)
+    g_frame.minimap_button.update_position = function(self)
+        local angle = math.rad(g_db and g_db.minimap_angle or 220)
         local radius = 80
         self:ClearAllPoints()
         self:SetPoint(
@@ -3255,23 +3228,23 @@ if Minimap then
         )
     end
 
-    frame.minimap_button:SetScript("OnClick", function()
-        if frame:IsShown() then
-            frame:Hide()
+    g_frame.minimap_button:SetScript("OnClick", function()
+        if g_frame:IsShown() then
+            g_frame:Hide()
         else
-            frame:Show()
+            g_frame:Show()
         end
     end)
-    frame.minimap_button:SetScript("OnEnter", function(self)
+    g_frame.minimap_button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine("CVar Browser")
         GameTooltip:AddLine("Click to open. Drag to move.", 1, 1, 1)
         GameTooltip:Show()
     end)
-    frame.minimap_button:SetScript("OnLeave", function()
+    g_frame.minimap_button:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
-    frame.minimap_button:SetScript("OnDragStart", function(self)
+    g_frame.minimap_button:SetScript("OnDragStart", function(self)
         GameTooltip:Hide()
         self:SetScript("OnUpdate", function(self)
             local minimap_x, minimap_y = Minimap:GetCenter()
@@ -3285,17 +3258,17 @@ if Minimap then
             local angle = math.deg(
                 math.atan2(cursor_y - minimap_y, cursor_x - minimap_x)
             )
-            if db then
-                db.minimap_angle = angle
+            if g_db then
+                g_db.minimap_angle = angle
             end
             self:update_position()
         end)
     end)
-    frame.minimap_button:SetScript("OnDragStop", function(self)
+    g_frame.minimap_button:SetScript("OnDragStop", function(self)
         self:SetScript("OnUpdate", nil)
         self:update_position()
     end)
-    frame.minimap_button:update_position()
+    g_frame.minimap_button:update_position()
 end
 
 -- Addon Compartment (Blizzard minimap drawer, also used by collectors) ------
@@ -3304,10 +3277,10 @@ function CVarBrowser_OnAddonCompartmentClick(_, mouseButton)
     if mouseButton ~= "LeftButton" then
         return
     end
-    if frame:IsShown() then
-        frame:Hide()
+    if g_frame:IsShown() then
+        g_frame:Hide()
     else
-        frame:Show()
+        g_frame:Show()
     end
 end
 
@@ -3325,63 +3298,63 @@ end
 -- Render ---------------------------------------------------------------------
 
 local function set_status(message, tone)
-    detail_status:SetText(message or "")
+    g_detail_status:SetText(message or "")
     local color = COLORS.success
     if tone == "error" then
         color = COLORS.error
     elseif tone == "warning" then
         color = COLORS.warning
     end
-    detail_status:SetTextColor(color[1], color[2], color[3], 1)
-    frame.status_token = (frame.status_token or 0) + 1
-    local token = frame.status_token
+    g_detail_status:SetTextColor(color[1], color[2], color[3], 1)
+    g_frame.status_token = (g_frame.status_token or 0) + 1
+    local token = g_frame.status_token
     if message and message ~= "" and C_Timer then
         C_Timer.After(30, function()
-            if frame.status_token == token then
-                detail_status:SetText("")
+            if g_frame.status_token == token then
+                g_detail_status:SetText("")
             end
         end)
     end
 end
 
-frame.notify = set_status
+g_frame.notify = set_status
 
 local function update_controls()
-    local entry = selected
+    local entry = g_selected
     local can_edit = entry ~= nil
         and not entry.readonly
         and not entry.locked
         and not (entry.secure and InCombatLockdown())
 
     if can_edit then
-        detail_edit:Enable()
-        set_button:Enable()
-        reset_button:Enable()
+        g_detail_edit:Enable()
+        g_set_button:Enable()
+        g_reset_button:Enable()
     else
-        detail_edit:Disable()
-        set_button:Disable()
-        reset_button:Disable()
+        g_detail_edit:Disable()
+        g_set_button:Disable()
+        g_reset_button:Disable()
     end
-    detail_edit_frame:SetAlpha(can_edit and 1 or 0.55)
-    set_button:SetAlpha(can_edit and 1 or 0.38)
-    reset_button:SetAlpha(can_edit and 1 or 0.38)
+    g_detail_edit_frame:SetAlpha(can_edit and 1 or 0.55)
+    g_set_button:SetAlpha(can_edit and 1 or 0.38)
+    g_reset_button:SetAlpha(can_edit and 1 or 0.38)
 
     if entry and entry.readonly then
-        detail_name:SetTextColor(
+        g_detail_name:SetTextColor(
             COLORS.muted[1],
             COLORS.muted[2],
             COLORS.muted[3],
             1
         )
     elseif entry and entry.changed then
-        detail_name:SetTextColor(
+        g_detail_name:SetTextColor(
             COLORS.changed[1],
             COLORS.changed[2],
             COLORS.changed[3],
             1
         )
     else
-        detail_name:SetTextColor(
+        g_detail_name:SetTextColor(
             COLORS.text[1],
             COLORS.text[2],
             COLORS.text[3],
@@ -3392,30 +3365,26 @@ local function update_controls()
     if entry and entry.secure and not entry.readonly and InCombatLockdown() then
         set_status("Secure CVar: cannot be changed in combat.", "warning")
     end
-    if frame.update_history_controls then
-        frame.update_history_controls()
-    end
-    if frame.update_copy_button then
-        frame.update_copy_button()
-    end
+    g_frame.update_history_controls()
+    g_frame.update_copy_button()
 end
 
 local function update_meta(parts)
     local x = 0
     for index = 1, META_MAX_PARTS do
-        local part = detail_meta_parts[index]
+        local part = g_detail_meta_parts[index]
         local spec = parts[index]
         if spec then
             if index > 1 then
-                x = snap(x + 9)
-                local separator = detail_meta_separators[index - 1]
+                x = round(x + 9)
+                local separator = g_detail_meta_separators[index - 1]
                 separator:ClearAllPoints()
-                separator:SetPoint("LEFT", detail_meta, "LEFT", x, 0)
+                separator:SetPoint("LEFT", g_detail_meta, "LEFT", x, 0)
                 separator:Show()
                 x = x + 10
             end
             part:ClearAllPoints()
-            part:SetPoint("LEFT", detail_meta, "LEFT", x, 0)
+            part:SetPoint("LEFT", g_detail_meta, "LEFT", x, 0)
             part:SetText(spec.text)
             part:SetTextColor(
                 spec.color[1],
@@ -3424,43 +3393,49 @@ local function update_meta(parts)
                 spec.color[4] or 1
             )
             part:Show()
-            x = snap(x + part:GetStringWidth())
+            x = round(x + part:GetStringWidth())
         else
             part:Hide()
-            if index > 1 and detail_meta_separators[index - 1] then
-                detail_meta_separators[index - 1]:Hide()
+            if index > 1 and g_detail_meta_separators[index - 1] then
+                g_detail_meta_separators[index - 1]:Hide()
             end
         end
     end
 end
 
 local function update_detail()
-    local entry = selected
+    local entry = g_selected
     if not entry then
-        detail_name:SetText("")
+        g_detail_name:SetText("")
         update_meta({})
-        detail_help:SetText("")
-        detail_help:Hide()
-        detail_edit:SetText("")
+        g_detail_help:SetText("")
+        g_detail_help:Hide()
+        g_detail_edit:SetText("")
         set_status("")
         update_controls()
         return
     end
 
-    detail_name:SetText(entry.name)
+    g_detail_name:SetText(entry.name)
     update_meta(build_meta_parts(entry))
 
     if entry.help and entry.help ~= "" then
-        detail_help:SetText(entry.help)
-        detail_help:Show()
+        g_detail_help:SetText(entry.help)
+        g_detail_help:Show()
     else
-        detail_help:SetText("")
-        detail_help:Hide()
+        g_detail_help:SetText("")
+        g_detail_help:Hide()
     end
 
-    detail_edit:SetText(display_edit_value(entry, entry.value))
+    g_detail_edit:SetText(display_edit_value(entry, entry.value))
     set_status("")
     update_controls()
+end
+
+-- Gauge x offset of bound within [domain_min, domain_min + GAUGE_WIDTH /
+-- scale]. Top-level so rendering a row allocates no closure.
+local function gauge_x(bound, domain_min, scale)
+    return clamp((bound - domain_min) * scale, 0, GAUGE_WIDTH)
 end
 
 local function update_gauge(gauge, entry)
@@ -3482,37 +3457,18 @@ local function update_gauge(gauge, entry)
     gauge.open_left:Hide()
     gauge.open_right:Hide()
 
-    local minimums = {}
-    local maximums = {}
-    if help_min ~= nil then
-        minimums[#minimums + 1] = help_min
+    local domain_min = help_min
+    if observed_min ~= nil and (domain_min == nil or observed_min < domain_min) then
+        domain_min = observed_min
     end
-    if observed_min ~= nil then
-        minimums[#minimums + 1] = observed_min
-    end
-    if help_max ~= nil then
-        maximums[#maximums + 1] = help_max
-    end
-    if observed_max ~= nil then
-        maximums[#maximums + 1] = observed_max
+    local domain_max = help_max
+    if observed_max ~= nil and (domain_max == nil or observed_max > domain_max) then
+        domain_max = observed_max
     end
 
-    if value == nil or (#minimums == 0 and #maximums == 0) then
+    if value == nil or (domain_min == nil and domain_max == nil) then
         gauge.dot:Show()
         return
-    end
-
-    local domain_min
-    local domain_max
-    for _, bound in ipairs(minimums) do
-        if domain_min == nil or bound < domain_min then
-            domain_min = bound
-        end
-    end
-    for _, bound in ipairs(maximums) do
-        if domain_max == nil or bound > domain_max then
-            domain_max = bound
-        end
     end
 
     local open_left = domain_min == nil
@@ -3527,14 +3483,7 @@ local function update_gauge(gauge, entry)
     if domain_max <= domain_min then
         domain_max = domain_min + 1
     end
-
-    local function position(bound)
-        return clamp(
-            (bound - domain_min) / (domain_max - domain_min) * GAUGE_WIDTH,
-            0,
-            GAUGE_WIDTH
-        )
-    end
+    local scale = GAUGE_WIDTH / (domain_max - domain_min)
 
     gauge.track:Show()
 
@@ -3543,7 +3492,7 @@ local function update_gauge(gauge, entry)
             "CENTER",
             gauge.frame,
             "LEFT",
-            position(help_min),
+            gauge_x(help_min, domain_min, scale),
             0
         )
         gauge.help_min:Show()
@@ -3553,7 +3502,7 @@ local function update_gauge(gauge, entry)
             "CENTER",
             gauge.frame,
             "LEFT",
-            position(help_max),
+            gauge_x(help_max, domain_min, scale),
             0
         )
         gauge.help_max:Show()
@@ -3563,7 +3512,7 @@ local function update_gauge(gauge, entry)
             "CENTER",
             gauge.frame,
             "LEFT",
-            position(observed_min),
+            gauge_x(observed_min, domain_min, scale),
             0
         )
         gauge.observed_min:Show()
@@ -3573,13 +3522,13 @@ local function update_gauge(gauge, entry)
             "CENTER",
             gauge.frame,
             "LEFT",
-            position(observed_max),
+            gauge_x(observed_max, domain_min, scale),
             0
         )
         gauge.observed_max:Show()
     end
 
-    local cursor_x = position(value)
+    local cursor_x = gauge_x(value, domain_min, scale)
     local cursor_color = entry.changed and COLORS.changed or COLORS.text
     gauge.cursor:SetColorTexture(
         cursor_color[1],
@@ -3591,7 +3540,7 @@ local function update_gauge(gauge, entry)
     gauge.cursor:Show()
 
     if entry.clamp_at ~= nil then
-        local clamp_x = position(entry.clamp_at)
+        local clamp_x = gauge_x(entry.clamp_at, domain_min, scale)
         if entry.clamp_side == "low" then
             clamp_x = max(0, clamp_x - 2)
         else
@@ -3624,7 +3573,7 @@ local function render_row(row, entry)
         name_color = COLORS.muted
     elseif entry.changed then
         name_color = COLORS.changed
-    elseif selected == entry then
+    elseif g_selected == entry then
         name_color = COLORS.accent
     end
     row.name_text:SetTextColor(
@@ -3657,7 +3606,7 @@ local function render_row(row, entry)
         end
         value_text = value_text
             .. " "
-            .. color_escape(COLORS.muted)
+            .. MUTED_ESCAPE
             .. "(Default: "
             .. default_display
             .. ")|r"
@@ -3671,94 +3620,97 @@ local function render_row(row, entry)
         1
     )
 
-    if selected == entry then
-        row.selected_background:Show()
-        row.selected_bar:Show()
-    else
-        row.selected_background:Hide()
-        row.selected_bar:Hide()
-    end
+    local is_selected = g_selected == entry
+    row.selected_background:SetShown(is_selected)
+    row.selected_bar:SetShown(is_selected)
+    row.hover:SetShown(not is_selected and row:IsMouseOver())
     update_gauge(row.gauge, entry)
 end
 
 local function update_scrollbar()
-    local range = scroll_frame:GetVerticalScrollRange() or 0
-    local viewport = scroll_frame:GetHeight() or LIST_HEIGHT
+    local range = g_scroll_frame:GetVerticalScrollRange() or 0
+    local viewport = g_scroll_frame:GetHeight() or METRICS.list_height
     if range <= 1 then
-        scrollbar:Hide()
+        g_scrollbar:Hide()
         return
     end
 
-    scrollbar:Show()
+    g_scrollbar:Show()
     local content = range + viewport
     local thumb_height = max(32, floor(viewport * viewport / content))
     local max_top = viewport - thumb_height
-    local scroll = scroll_frame:GetVerticalScroll() or 0
+    local scroll = g_scroll_frame:GetVerticalScroll() or 0
     local top = range > 0 and (scroll / range) * max_top or 0
 
-    scrollbar_thumb:SetHeight(thumb_height)
-    scrollbar_thumb:ClearAllPoints()
-    scrollbar_thumb:SetPoint("TOP", scrollbar, "TOP", 0, -top)
-    if frame.snap_box then
-        frame.snap_box(scrollbar_thumb)
-    end
+    g_scrollbar_thumb:SetHeight(thumb_height)
+    g_scrollbar_thumb:ClearAllPoints()
+    g_scrollbar_thumb:SetPoint("TOP", g_scrollbar, "TOP", 0, -top)
+    g_frame.snap_box(g_scrollbar_thumb)
 end
 
 local function update_rows()
-    local total = #view
-    scroll_child:SetHeight(max(1, total * ROW_HEIGHT))
-    local offset = scroll_frame:GetVerticalScroll() or 0
-    local first = floor(offset / ROW_HEIGHT + 0.5) + 1
+    local total = #g_view
+    g_scroll_child:SetHeight(max(1, total * ROW_HEIGHT))
+    local offset = g_scroll_frame:GetVerticalScroll() or 0
+    -- floor, not round: the partially scrolled-off top row must still draw.
+    local first = floor(offset / ROW_HEIGHT) + 1
     if first < 1 then
         first = 1
     end
 
     for index = 1, ROW_COUNT do
-        local row = rows[index]
-        local entry = view[first + index - 1]
+        local row = g_rows[index]
+        local entry = g_view[first + index - 1]
         local y = -((first + index - 2) * ROW_HEIGHT)
         row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", scroll_child, "TOPLEFT", 0, y)
-        row:SetPoint("TOPRIGHT", scroll_child, "TOPRIGHT", 0, y)
+        row:SetPoint("TOPLEFT", g_scroll_child, "TOPLEFT", 0, y)
+        row:SetPoint("TOPRIGHT", g_scroll_child, "TOPRIGHT", 0, y)
         render_row(row, entry)
     end
     update_scrollbar()
 end
 
 local function select_entry(entry)
-    selected = entry
+    g_selected = entry
     update_detail()
     update_rows()
 end
 
 local function rebuild_view()
-    local query = trim(search_box:GetText() or ""):lower()
-    local only_changed = changed_button.checked
+    local query = trim(g_search_box:GetText() or "")
+    local use_pattern = g_frame.regex_enabled == true
+    local only_changed = g_changed_button.checked
     local terms = {}
     local filter_scope
     local filter_category
     local filter_type
     local filter_has
-    for token in query:gmatch("%S+") do
-        local key, value = token:match("^([%w_]+):(.+)$")
-        if key == "scope" then
+    for raw_token in query:gmatch("%S+") do
+        local token = raw_token:lower()
+        local token_key, value = token:match("^([%w_]+):(.+)$")
+        if token_key == "scope" then
             filter_scope = value
-        elseif key == "category" or key == "cat" then
+        elseif token_key == "category" or token_key == "cat" then
             filter_category = value
-        elseif key == "type" then
+        elseif token_key == "type" then
             filter_type = value
-        elseif key == "has" then
+        elseif token_key == "has" then
             filter_has = value
         elseif token == "changed" then
             only_changed = true
         else
-            terms[#terms + 1] = token
+            -- Pattern mode lowercases only literal letters: %S/%D/%W/%A
+            -- would invert into %s/%d/%w/%a if the class letter changed.
+            terms[#terms + 1] = use_pattern
+                and (raw_token:gsub("(%%?)(%a)", function(escape, letter)
+                    return escape == "" and letter:lower() or nil
+                end))
+                or token
         end
     end
     local pattern = concat(terms, " ")
-    local use_pattern = frame.regex_enabled == true
-    local visual_filters = frame.filters or {}
-    local visual_has = visual_filters.has or {}
+    local visual_filters = g_frame.filters
+    local visual_has = visual_filters.has
 
     local function has_state(entry, facet)
         if facet == "range" then
@@ -3825,7 +3777,7 @@ local function rebuild_view()
         end
         if visual_filters.type
             and visual_filters.type ~= ""
-            and infer_value_type(entry):lower() ~= visual_filters.type then
+            and entry.type_key ~= visual_filters.type then
             return false
         end
         for facet, enabled in pairs(visual_has) do
@@ -3850,50 +3802,38 @@ local function rebuild_view()
             return false
         end
         if filter_type
-            and infer_value_type(entry):lower() ~= filter_type then
+            and entry.type_key ~= filter_type then
             return false
         end
-        if filter_has then
-            if filter_has == "range" and not entry.range_text then
-                return false
-            elseif filter_has == "observed"
-                and entry.range_source ~= "observed" then
-                return false
-            elseif filter_has == "help"
-                and not entry.help_range then
-                return false
-            elseif filter_has == "default"
-                and entry.default_value == nil then
-                return false
-            elseif filter_has == "changed"
-                and not entry.changed then
-                return false
-            end
+        if filter_has and not has_state(entry, filter_has) then
+            return false
         end
         return true
     end
 
     local range_count = 0
-    view = {}
+    g_view = {}
 
-    for _, entry in ipairs(entries) do
+    for _, entry in ipairs(g_entries) do
+        -- Inferred once per rebuild; filters and the type sort reuse it.
+        entry.type_key = infer_value_type(entry):lower()
         if matches_filters(entry) and matches_text(entry) then
-            view[#view + 1] = entry
+            g_view[#g_view + 1] = entry
             if entry.range_text then
                 range_count = range_count + 1
             end
         end
     end
 
-    local sort_key = frame.sort_key or "name"
-    local sort_dir = frame.sort_dir or "asc"
+    local sort_key = g_frame.sort_key or "name"
+    local sort_dir = g_frame.sort_dir or "asc"
     if sort_key ~= "name" or sort_dir ~= "asc" then
-        local function sort_value(entry, key)
-            if key == "type" then
-                return infer_value_type(entry):lower()
-            elseif key == "scope" then
+        local function sort_value(entry, token_key)
+            if token_key == "type" then
+                return entry.type_key
+            elseif token_key == "scope" then
                 return (entry.scope or ""):lower()
-            elseif key == "category" then
+            elseif token_key == "category" then
                 return (entry.category or ""):lower()
             end
             return entry.name_lower
@@ -3919,7 +3859,7 @@ local function rebuild_view()
             end
             return nil
         end
-        sort(view, function(a, b)
+        sort(g_view, function(a, b)
             if sort_key == "changed" then
                 if a.changed ~= b.changed then
                     if sort_dir == "desc" then
@@ -3955,45 +3895,46 @@ local function rebuild_view()
         end)
     end
 
-    if selected then
+    if g_selected then
         local still_visible = false
-        for _, entry in ipairs(view) do
-            if entry == selected then
+        for _, entry in ipairs(g_view) do
+            if entry == g_selected then
                 still_visible = true
                 break
             end
         end
         if not still_visible then
-            selected = nil
+            g_selected = nil
         end
     end
-    if not selected and #view > 0 then
-        selected = view[1]
+    if not g_selected and #g_view > 0 then
+        g_selected = g_view[1]
     end
 
-    count_text:SetText(
+    g_count_text:SetText(
         format(
             "%d / %d CVars, %d with range",
-            #view,
-            #entries,
+            #g_view,
+            #g_entries,
             range_count
         )
     )
-    scroll_frame:SetVerticalScroll(0)
+    g_scroll_frame.scroll_target = nil
+    g_scroll_frame:SetVerticalScroll(0)
     update_rows()
     update_detail()
 end
 
-frame.rebuild_results = rebuild_view
+g_frame.rebuild_results = rebuild_view
 
 local function rescan()
-    local selected_name = selected and selected.name
-    by_name = {}
-    for index = #entries, 1, -1 do
-        entries[index] = nil
+    local selected_name = g_selected and g_selected.name
+    g_by_name = {}
+    for index = #g_entries, 1, -1 do
+        g_entries[index] = nil
     end
-    view = {}
-    selected = nil
+    g_view = {}
+    g_selected = nil
 
     local ok, commands = pcall(ConsoleGetAllCommands)
     if not ok or type(commands) ~= "table" then
@@ -4008,7 +3949,7 @@ local function rescan()
     for _, info in pairs(commands) do
         if is_cvar_entry(info) then
             local name = info.command
-            if not by_name[name] then
+            if not g_by_name[name] then
                 local help = info.help
                 local category = info.category
                 if type(category) == "number" then
@@ -4026,27 +3967,27 @@ local function rescan()
                 entry.help_enum = parse_enum_help(help)
                 read_cvar_value(entry)
                 apply_range(entry)
-                by_name[name] = entry
-                by_name[entry.name_lower] = entry
-                entries[#entries + 1] = entry
+                g_by_name[name] = entry
+                g_by_name[entry.name_lower] = entry
+                g_entries[#g_entries + 1] = entry
             end
         end
     end
 
-    sort(entries, function(a, b)
+    sort(g_entries, function(a, b)
         return a.name_lower < b.name_lower
     end)
 
-    selected = selected_name and by_name[selected_name] or nil
-    if frame.filter_popup and frame.filter_popup:IsShown() then
-        frame.refresh_filter_menu()
+    g_selected = selected_name and g_by_name[selected_name] or nil
+    if g_frame.filter_popup:IsShown() then
+        g_frame.refresh_filter_menu()
     end
     rebuild_view()
-    set_status(format("Loaded %d CVars.", #entries))
+    set_status(format("Loaded %d CVars.", #g_entries))
 end
 
 local function apply_value()
-    local entry = selected
+    local entry = g_selected
     if not entry then
         return
     end
@@ -4064,7 +4005,7 @@ local function apply_value()
     end
 
     local previous = entry.value
-    local requested = detail_edit:GetText() or ""
+    local requested = g_detail_edit:GetText() or ""
     if entry.bitfield or entry.serialized then
         local decoded = hex_to_bitfield(requested)
         if decoded == nil then
@@ -4089,8 +4030,7 @@ local function apply_value()
     read_cvar_value(entry)
     local actual = entry.value
     if actual ~= nil and previous ~= nil and actual ~= previous then
-        local undo = frame.undo_stack or {}
-        frame.undo_stack = undo
+        local undo = g_frame.undo_stack
         undo[#undo + 1] = {
             name = entry.name,
             previous = previous,
@@ -4098,7 +4038,7 @@ local function apply_value()
         if #undo > 20 then
             table.remove(undo, 1)
         end
-        frame.redo_stack = {}
+        g_frame.redo_stack = {}
     end
     local learned = record_observed_bound(entry, requested, previous)
     if learned then
@@ -4117,12 +4057,12 @@ local function apply_value()
     end
 
     update_rows()
-    if not detail_edit:HasFocus() then
+    if not g_detail_edit:HasFocus() then
         update_detail()
     else
         if actual ~= nil then
-            detail_edit:SetText(display_edit_value(entry, actual))
-            detail_edit:HighlightText()
+            g_detail_edit:SetText(display_edit_value(entry, actual))
+            g_detail_edit:HighlightText()
         end
         update_meta(build_meta_parts(entry))
         update_controls()
@@ -4178,213 +4118,266 @@ local function apply_value()
 end
 
 local function reset_value()
-    if not selected or selected.readonly then
+    if not g_selected or g_selected.readonly then
         return
     end
-    detail_edit:SetText(
-        display_edit_value(selected, selected.default_value)
+    g_detail_edit:SetText(
+        display_edit_value(g_selected, g_selected.default_value)
     )
     apply_value()
 end
 
 local function toggle_changed()
-    changed_button.checked = not changed_button.checked
-    if changed_button.checked then
-        changed_tick:Show()
+    g_changed_button.checked = not g_changed_button.checked
+    if g_changed_button.checked then
+        g_changed_tick:Show()
     else
-        changed_tick:Hide()
+        g_changed_tick:Hide()
     end
-    if frame.filter_popup and frame.filter_popup:IsShown() then
-        frame.refresh_filter_menu()
+    if g_frame.filter_popup:IsShown() then
+        g_frame.refresh_filter_menu()
     end
     rebuild_view()
 end
 
-local function scroll_to(value)
-    local range = scroll_frame:GetVerticalScrollRange() or 0
-    scroll_frame:SetVerticalScroll(clamp(value, 0, range))
+local function scroll_to(value, smooth)
+    g_frame.scroll_frame_to(g_scroll_frame, value, smooth)
 end
 
 local function handle_scrollbar_drag_start()
-    local scale = frame:GetEffectiveScale() or 1
+    local scale = g_frame:GetEffectiveScale() or 1
     local _, cursor_y = GetCursorPosition()
-    scroll_drag = {
+    g_scroll_drag = {
         start_y = cursor_y / scale,
-        start_scroll = scroll_frame:GetVerticalScroll() or 0,
-        max_top = max(1, scrollbar:GetHeight() - scrollbar_thumb:GetHeight()),
-        max_scroll = scroll_frame:GetVerticalScrollRange() or 0,
+        start_scroll = g_scroll_frame:GetVerticalScroll() or 0,
+        max_top = max(1, g_scrollbar:GetHeight() - g_scrollbar_thumb:GetHeight()),
+        max_scroll = g_scroll_frame:GetVerticalScrollRange() or 0,
     }
-    scrollbar_thumb:SetScript("OnUpdate", function()
-        if not scroll_drag or not IsMouseButtonDown("LeftButton") then
-            scrollbar_thumb:SetScript("OnUpdate", nil)
-            scroll_drag = nil
+    g_scrollbar_thumb:SetScript("OnUpdate", function()
+        if not g_scroll_drag or not IsMouseButtonDown("LeftButton") then
+            g_scrollbar_thumb:SetScript("OnUpdate", nil)
+            g_scroll_drag = nil
             return
         end
-        local current_scale = frame:GetEffectiveScale() or 1
+        local current_scale = g_frame:GetEffectiveScale() or 1
         local _, current_y = GetCursorPosition()
-        local delta = (scroll_drag.start_y - current_y / current_scale)
-            / scroll_drag.max_top
-            * scroll_drag.max_scroll
-        scroll_to(scroll_drag.start_scroll + delta)
+        local delta = (g_scroll_drag.start_y - current_y / current_scale)
+            / g_scroll_drag.max_top
+            * g_scroll_drag.max_scroll
+        scroll_to(g_scroll_drag.start_scroll + delta)
     end)
 end
 
 local function stop_scrollbar_drag()
-    scroll_drag = nil
-    scrollbar_thumb:SetScript("OnUpdate", nil)
+    -- Settle on a whole row so the top row is never left half-clipped.
+    if g_scroll_drag then
+        local current = g_scroll_frame:GetVerticalScroll() or 0
+        scroll_to(round(current / ROW_HEIGHT) * ROW_HEIGHT, true)
+    end
+    g_scroll_drag = nil
+    g_scrollbar_thumb:SetScript("OnUpdate", nil)
 end
 
 -- Wiring ---------------------------------------------------------------------
 
-titlebar:SetScript("OnDragStart", function()
-    frame:StartMoving()
+-- Custom drag instead of StartMoving: StartMoving glides the frame through
+-- sub-pixel positions, so text and hairlines shimmered by 1px mid-drag.
+-- Each update places the top-left on a whole physical pixel instead.
+-- SetPoint offsets are frame units (verified in game), and relative to
+-- UIParent's BOTTOMLEFT they equal GetLeft/GetTop directly.
+g_titlebar:SetScript("OnDragStart", function()
+    local scale = g_frame:GetEffectiveScale()
+    local cursor_x, cursor_y = GetCursorPosition()
+    g_frame.drag = {
+        x = cursor_x / scale - g_frame:GetLeft(),
+        y = cursor_y / scale - g_frame:GetTop(),
+    }
+    g_frame:SetScript("OnUpdate", function(self)
+        local drag = self.drag
+        if not drag or not IsMouseButtonDown("LeftButton") then
+            self:SetScript("OnUpdate", nil)
+            return
+        end
+        local current_scale = self:GetEffectiveScale()
+        local px = SCALE.pixel
+        local x, y = GetCursorPosition()
+        local left = round((x / current_scale - drag.x) * px) / px
+        local top = round((y / current_scale - drag.y) * px) / px
+        if left ~= drag.left or top ~= drag.top then
+            drag.left = left
+            drag.top = top
+            self:ClearAllPoints()
+            self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+        end
+    end)
 end)
-titlebar:SetScript("OnDragStop", function()
-    frame:StopMovingOrSizing()
-    -- Snap the anchor to whole pixels once on release. During the drag the
-    -- frame glides smoothly (no per-frame snapping), which avoids the shimmer
-    -- and border breaks that per-frame repositioning caused. This matches the
-    -- proven drag model used across the other addons.
+g_titlebar:SetScript("OnDragStop", function()
+    g_frame.drag = nil
+    g_frame:SetScript("OnUpdate", nil)
+    -- Mop up any clamp-to-screen residue and persist the anchor.
     snap_frame_position()
-    if not db then
+    if not g_db then
         return
     end
-    local point, _, relative_point, x, y = frame:GetPoint(1)
+    local point, _, relative_point, x, y = g_frame:GetPoint(1)
     if point then
-        db.point = point
-        db.relativePoint = relative_point
-        db.x = x or 0
-        db.y = y or 0
+        g_db.point = point
+        g_db.relativePoint = relative_point
+        g_db.x = x or 0
+        g_db.y = y or 0
     end
 end)
 
-close_button:SetScript("OnClick", function()
-    frame:Hide()
+g_close_button:SetScript("OnClick", function()
+    g_frame:Hide()
 end)
 
-scale_button:SetScript("OnClick", toggle_scale_popup)
-for _, row in ipairs(scale_rows) do
+g_scale_button:SetScript("OnClick", toggle_scale_popup)
+for _, row in ipairs(g_scale_rows) do
     row:SetScript("OnClick", function(self)
         set_layout(self.option.value)
     end)
 end
 
-search_box:SetScript("OnTextChanged", function(self)
-    search_placeholder:SetShown(
+g_search_box:SetScript("OnTextChanged", function(self)
+    g_search_placeholder:SetShown(
         (self:GetText() or "") == "" and not self:HasFocus()
     )
+    self.navigated = false
     rebuild_view()
 end)
-search_box:SetScript("OnEditFocusGained", function()
-    search_frame:SetBackdropBorderColor(
+g_search_box:SetScript("OnEditFocusGained", function()
+    g_search_frame:SetBackdropBorderColor(
         COLORS.accent[1],
         COLORS.accent[2],
         COLORS.accent[3],
         1
     )
     -- The caret blinks where the placeholder starts; hide it while typing.
-    search_placeholder:Hide()
+    g_search_placeholder:Hide()
 end)
-search_box:SetScript("OnEditFocusLost", function()
-    search_frame:SetBackdropBorderColor(
+g_search_box:SetScript("OnEditFocusLost", function()
+    g_search_frame:SetBackdropBorderColor(
         COLORS.border[1],
         COLORS.border[2],
         COLORS.border[3],
         1
     )
-    if (search_box:GetText() or "") == "" then
-        search_placeholder:Show()
+    if (g_search_box:GetText() or "") == "" then
+        g_search_placeholder:Show()
     end
 end)
-search_box:SetScript("OnEnterPressed", function(self)
-    if #view > 0 then
-        select_entry(view[1])
-        if not view[1].readonly
-            and not (view[1].secure and InCombatLockdown()) then
-            detail_edit:SetFocus()
-            detail_edit:HighlightText()
+g_search_box:SetScript("OnEnterPressed", function(self)
+    -- Enter keeps a row picked with the arrow keys; otherwise the top match.
+    local entry = self.navigated and g_selected or g_view[1]
+    if entry then
+        select_entry(entry)
+        if not entry.readonly
+            and not (entry.secure and InCombatLockdown()) then
+            g_detail_edit:SetFocus()
+            g_detail_edit:HighlightText()
         end
     else
         self:ClearFocus()
     end
 end)
-search_box:SetScript("OnEscapePressed", function(self)
+g_search_box:SetScript("OnEscapePressed", function(self)
     self:ClearFocus()
 end)
-search_box:SetScript("OnKeyDown", function(_, key)
-    if key ~= "UP" and key ~= "DOWN" then
+g_search_box:SetScript("OnKeyDown", function(self, pressed)
+    if pressed ~= "UP" and pressed ~= "DOWN" then
         return
     end
-    if #view == 0 then
+    if #g_view == 0 then
         return
     end
     local index = 1
-    if selected then
-        for position, entry in ipairs(view) do
-            if entry == selected then
+    if g_selected then
+        for position, entry in ipairs(g_view) do
+            if entry == g_selected then
                 index = position
                 break
             end
         end
     end
-    if key == "DOWN" then
-        index = min(index + 1, #view)
+    if pressed == "DOWN" then
+        index = min(index + 1, #g_view)
     else
         index = max(index - 1, 1)
     end
-    select_entry(view[index])
-    scroll_to((index - 1) * ROW_HEIGHT)
+    self.navigated = true
+    select_entry(g_view[index])
+    scroll_to((index - 1) * ROW_HEIGHT, true)
 end)
 
-changed_button:SetScript("OnClick", toggle_changed)
+g_changed_button:SetScript("OnClick", toggle_changed)
 
-detail_edit:SetScript("OnEscapePressed", function(self)
+g_detail_edit:SetScript("OnEscapePressed", function(self)
     self:ClearFocus()
 end)
-detail_edit:SetScript("OnEnterPressed", function(self)
+g_detail_edit:SetScript("OnEnterPressed", function(self)
     apply_value()
     self:HighlightText()
 end)
-detail_edit:SetScript("OnEditFocusGained", function()
-    hairline.set_color(detail_edit_frame.borders, COLORS.accent)
+g_detail_edit:SetScript("OnEditFocusGained", function()
+    g_hairline.set_color(g_detail_edit_frame.borders, COLORS.accent)
 end)
-detail_edit:SetScript("OnEditFocusLost", function()
-    hairline.set_color(detail_edit_frame.borders, COLORS.border)
+g_detail_edit:SetScript("OnEditFocusLost", function()
+    g_hairline.set_color(g_detail_edit_frame.borders, COLORS.border)
 end)
 
-set_button:SetScript("OnClick", apply_value)
-reset_button:SetScript("OnClick", reset_value)
+g_set_button:SetScript("OnClick", apply_value)
+g_reset_button:SetScript("OnClick", reset_value)
 
-scroll_frame:SetScript("OnVerticalScroll", function()
+g_scroll_frame:SetScript("OnVerticalScroll", function()
     update_rows()
 end)
-scroll_frame:SetScript("OnMouseWheel", function(self, delta)
-    scroll_to(
-        (self:GetVerticalScroll() or 0)
-            - delta * ROW_HEIGHT * 3
-    )
+g_scroll_frame:SetScript("OnMouseWheel", function(self, delta)
+    -- Chain from the pending target so fast wheel spins accumulate.
+    local base = self.scroll_target or self:GetVerticalScroll() or 0
+    scroll_to(base - delta * ROW_HEIGHT * 3, true)
 end)
-scroll_frame:SetScript("OnSizeChanged", function(self, width)
-    scroll_child:SetWidth(width)
+g_scroll_frame:SetScript("OnSizeChanged", function(self, width)
+    g_scroll_child:SetWidth(width)
     update_scrollbar()
 end)
+-- Size changes resize the list in several layout steps, so the range can
+-- shrink then grow again. If the list was at the bottom, keep it pinned
+-- there; otherwise only pull an offset (and any pending smooth target)
+-- back inside a shrunken range so no empty strip shows.
+g_scroll_frame:SetScript("OnScrollRangeChanged", function(self, _, y_range)
+    y_range = y_range or self:GetVerticalScrollRange() or 0
+    local current = self:GetVerticalScroll() or 0
+    local last_range = self.last_range
+    local was_at_bottom = last_range and last_range > 0
+        and current >= last_range - 0.5
+    self.last_range = y_range
+    if self.scroll_target and self.scroll_target > y_range then
+        self.scroll_target = y_range
+    end
+    if was_at_bottom or current > y_range then
+        scroll_to(y_range)
+    else
+        update_scrollbar()
+    end
+end)
 
-scrollbar_thumb:SetScript("OnMouseDown", function(_, button)
+g_scrollbar_thumb:SetScript("OnMouseDown", function(_, button)
     if button == "LeftButton" then
         handle_scrollbar_drag_start()
     end
 end)
-scrollbar_thumb:SetScript("OnMouseUp", stop_scrollbar_drag)
+g_scrollbar_thumb:SetScript("OnMouseUp", stop_scrollbar_drag)
 
 for index = 1, ROW_COUNT do
-    local row = rows[index]
+    local row = g_rows[index]
     row:SetScript("OnClick", function(self)
         if self.entry then
             select_entry(self.entry)
         end
     end)
     row:SetScript("OnEnter", function(self)
-        if self.entry and selected ~= self.entry then
+        if self.entry and g_selected ~= self.entry then
             self.hover:Show()
         end
     end)
@@ -4393,32 +4386,33 @@ for index = 1, ROW_COUNT do
     end)
 end
 
-frame:SetScript("OnShow", function(self)
+g_frame:SetScript("OnShow", function(self)
     self:Raise()
-    scale_popup:Hide()
+    g_scale_popup:Hide()
+    g_frame.close_menus()
     apply_ui_scale()
     rescan()
 end)
-frame:SetScript("OnEvent", function(self, event, argument)
+g_frame:SetScript("OnEvent", function(self, event, argument)
     if event == "ADDON_LOADED" then
-        if argument ~= addon_name then
+        if argument ~= g_addon_name then
             return
         end
         init_db()
         self:ClearAllPoints()
-        -- db.x/db.y were saved as an on-grid anchor by the drag (rendered pixel
+        -- g_db.x/y were saved as an on-grid anchor by the drag (rendered pixel
         -- locked). Restore them verbatim; re-rounding them here on a different
         -- grid would fight the drag grid and shift the frame a pixel.
         -- snap_frame_position() in apply_ui_scale is the single authoritative
         -- rendered-pixel snap.
-        local x = tonumber(db.x) or 0
-        local y = tonumber(db.y) or 0
+        local x = tonumber(g_db.x) or 0
+        local y = tonumber(g_db.y) or 0
         local ok = pcall(
             self.SetPoint,
             self,
-            db.point or "CENTER",
+            g_db.point or "CENTER",
             UIParent,
-            db.relativePoint or "CENTER",
+            g_db.relativePoint or "CENTER",
             x,
             y
         )
@@ -4427,18 +4421,20 @@ frame:SetScript("OnEvent", function(self, event, argument)
             self:SetPoint("CENTER")
         end
         apply_ui_scale()
-        if type(frame.minimap_button) == "table" then
-            frame.minimap_button:update_position()
-            frame.minimap_button:SetShown(not db.minimap_hidden)
+        if type(g_frame.minimap_button) == "table" then
+            g_frame.minimap_button:update_position()
+            g_frame.minimap_button:SetShown(not g_db.minimap_hidden)
         end
         self:UnregisterEvent("ADDON_LOADED")
     elseif event == "CVAR_UPDATE" then
-        local entry = argument and by_name[argument]
+        -- The payload keeps the caller's casing; g_by_name also keys lowercase.
+        local entry = type(argument) == "string"
+            and (g_by_name[argument] or g_by_name[argument:lower()])
         if entry then
             read_cvar_value(entry)
             apply_range(entry)
             update_rows()
-            if selected == entry and not detail_edit:HasFocus() then
+            if g_selected == entry and not g_detail_edit:HasFocus() then
                 update_detail()
             end
         end
@@ -4454,25 +4450,98 @@ frame:SetScript("OnEvent", function(self, event, argument)
         end
     end
 end)
-frame:RegisterEvent("ADDON_LOADED")
-frame:RegisterEvent("CVAR_UPDATE")
-frame:RegisterEvent("PLAYER_REGEN_DISABLED")
-frame:RegisterEvent("PLAYER_REGEN_ENABLED")
-frame:RegisterEvent("PLAYER_ENTERING_WORLD")
-frame:RegisterEvent("UI_SCALE_CHANGED")
-frame:RegisterEvent("DISPLAY_SIZE_CHANGED")
+g_frame:RegisterEvent("ADDON_LOADED")
+g_frame:RegisterEvent("CVAR_UPDATE")
+g_frame:RegisterEvent("PLAYER_REGEN_DISABLED")
+g_frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+g_frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+g_frame:RegisterEvent("UI_SCALE_CHANGED")
+g_frame:RegisterEvent("DISPLAY_SIZE_CHANGED")
 
 -- Slash commands -------------------------------------------------------------
 
 SLASH_CVARBROWSER1 = "/cvars"
 SLASH_CVARBROWSER2 = "/cb"
 SLASH_CVARBROWSER3 = "/cvarbrowser"
+
+do
+-- Undo and redo are mirror images: pop one stack, re-apply its previous
+-- value, and push the value it replaced onto the other stack.
+local function step_history(verb)
+    local is_undo = verb == "undo"
+    local from = is_undo and g_frame.undo_stack or g_frame.redo_stack
+    local last = from[#from]
+    if not last then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cffB7A3CCCVarBrowser|r nothing to " .. verb
+        )
+        return
+    end
+    if not g_frame:IsShown() then
+        g_frame:Show()
+    end
+    local entry = g_by_name[last.name]
+    if not entry then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cffB7A3CCCVarBrowser|r CVar no longer exists: " .. last.name
+        )
+        return
+    end
+    if entry.readonly or entry.locked
+        or (entry.secure and InCombatLockdown()) then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cffB7A3CCCVarBrowser|r cannot " .. verb .. " " .. last.name
+                .. " in its current state"
+        )
+        return
+    end
+    local title = is_undo and "Undo" or "Redo"
+    local current = entry.value
+    from[#from] = nil
+    local ok, result = pcall(SetCVarNative, last.name, last.previous)
+    if not ok or result == false then
+        from[#from + 1] = last
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cffB7A3CCCVarBrowser|r " .. verb .. " refused for " .. last.name
+        )
+        set_status(title .. " refused: " .. last.name, "error")
+        return
+    end
+    read_cvar_value(entry)
+    if entry.value ~= last.previous then
+        from[#from + 1] = last
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cffB7A3CCCVarBrowser|r " .. verb .. " did not stick for "
+                .. last.name
+        )
+        set_status(title .. " did not stick: " .. last.name, "error")
+        return
+    end
+    local to = is_undo and g_frame.redo_stack or g_frame.undo_stack
+    to[#to + 1] = {
+        name = last.name,
+        previous = current,
+    }
+    if not is_undo and #to > 20 then
+        table.remove(to, 1)
+    end
+    apply_range(entry)
+    select_entry(entry)
+    local text = format(
+        is_undo and "Undid %s; restored %s" or "Redid %s; now %s",
+        last.name,
+        display_edit_value(entry, entry.value)
+    )
+    set_status(text)
+    DEFAULT_CHAT_FRAME:AddMessage("|cffB7A3CCCVarBrowser|r " .. text)
+end
+
 SlashCmdList["CVARBROWSER"] = function(message)
     local message_text = trim(message or "")
     local lower = message_text:lower()
 
     if lower == "minimap" or lower:match("^minimap%s+") then
-        if type(frame.minimap_button) ~= "table" then
+        if type(g_frame.minimap_button) ~= "table" then
             DEFAULT_CHAT_FRAME:AddMessage(
                 "|cffB7A3CCCVarBrowser|r minimap button unavailable"
             )
@@ -4480,19 +4549,19 @@ SlashCmdList["CVARBROWSER"] = function(message)
         end
         local argument = lower:match("^minimap%s+(%S+)")
         if argument == "reset" then
-            if db then
-                db.minimap_angle = 220
+            if g_db then
+                g_db.minimap_angle = 220
             end
-            frame.minimap_button:update_position()
+            g_frame.minimap_button:update_position()
             DEFAULT_CHAT_FRAME:AddMessage(
                 "|cffB7A3CCCVarBrowser|r minimap angle reset"
             )
         else
-            if db then
-                db.minimap_hidden = not db.minimap_hidden
+            if g_db then
+                g_db.minimap_hidden = not g_db.minimap_hidden
             end
-            local hidden = db and db.minimap_hidden
-            frame.minimap_button:SetShown(not hidden)
+            local hidden = g_db and g_db.minimap_hidden
+            g_frame.minimap_button:SetShown(not hidden)
             DEFAULT_CHAT_FRAME:AddMessage(
                 "|cffB7A3CCCVarBrowser|r minimap button "
                     .. (hidden and "hidden" or "shown")
@@ -4502,8 +4571,8 @@ SlashCmdList["CVARBROWSER"] = function(message)
     end
 
     if lower == "copy" or lower:match("^copy%s+") then
-        if not frame:IsShown() then
-            frame:Show()
+        if not g_frame:IsShown() then
+            g_frame:Show()
         end
         local field = lower:match("^copy%s+(%S+)") or "value"
         local target_name = lower:match("^copy%s+%S+%s+(%S+)")
@@ -4519,9 +4588,9 @@ SlashCmdList["CVARBROWSER"] = function(message)
             target_name = field
             field = "value"
         end
-        local entry = selected
+        local entry = g_selected
         if target_name then
-            entry = by_name[target_name]
+            entry = g_by_name[target_name]
         end
         if not entry then
             DEFAULT_CHAT_FRAME:AddMessage(
@@ -4535,7 +4604,7 @@ SlashCmdList["CVARBROWSER"] = function(message)
         elseif field == "default" then
             value = entry.default_value
         elseif field == "help" then
-            value = entry.help or entry.help_raw
+            value = entry.help
         elseif field == "range" then
             value = entry.range_text
         elseif field == "raw" then
@@ -4550,15 +4619,9 @@ SlashCmdList["CVARBROWSER"] = function(message)
             )
             return
         end
-        if CopyToClipboard then
-            CopyToClipboard(tostring(value))
-        else
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r CopyToClipboard unavailable"
-            )
-            return
-        end
-        set_status("Copied " .. field .. ": " .. entry.name)
+        g_frame.close_menus()
+        g_frame.show_copy_box(tostring(value))
+        set_status("Press Ctrl+C to copy " .. field .. ": " .. entry.name)
         return
     end
 
@@ -4569,7 +4632,7 @@ SlashCmdList["CVARBROWSER"] = function(message)
                 .. "ranges [name], clearrange <name>, clearranges, "
                 .. "sort name|type|scope|category|changed|range [asc|desc], "
                 .. "copy [value|raw|default|name|help|range] [cvar], "
-                .. "regex [on|off], minimap [reset], filters"
+                .. "regex [on|off], smooth [on|off], minimap [reset], filters"
         )
         return
     end
@@ -4593,12 +4656,12 @@ SlashCmdList["CVARBROWSER"] = function(message)
             set_status("Sort direction must be asc or desc.", "error")
             return
         end
-        frame.sort_key = sort_key
+        g_frame.sort_key = sort_key
         if sort_dir == "" then
             sort_dir = sort_key == "changed" and "desc" or "asc"
         end
-        frame.sort_dir = sort_dir
-        frame.update_sort_chip()
+        g_frame.sort_dir = sort_dir
+        g_frame.update_sort_chip()
         rebuild_view()
         set_status("Sorted by " .. sort_key .. " " .. sort_dir)
         return
@@ -4607,19 +4670,35 @@ SlashCmdList["CVARBROWSER"] = function(message)
     if lower == "regex" or lower:match("^regex%s+") then
         local value = lower:match("^regex%s+(%S+)")
         if value == "on" then
-            frame.regex_enabled = true
+            g_frame.regex_enabled = true
         elseif value == "off" then
-            frame.regex_enabled = false
+            g_frame.regex_enabled = false
         else
-            frame.regex_enabled = not frame.regex_enabled
+            g_frame.regex_enabled = not g_frame.regex_enabled
         end
-        frame.update_regex_chip()
+        g_frame.update_regex_chip()
         rebuild_view()
         local text = "Pattern search "
-            .. (frame.regex_enabled and "on" or "off")
+            .. (g_frame.regex_enabled and "on" or "off")
         set_status(text)
         DEFAULT_CHAT_FRAME:AddMessage(
             "|cffB7A3CCCVarBrowser|r " .. text
+        )
+        return
+    end
+
+    if lower == "smooth" or lower:match("^smooth%s+") then
+        local value = lower:match("^smooth%s+(%S+)")
+        if value == "on" then
+            g_db.smooth_scroll = true
+        elseif value == "off" then
+            g_db.smooth_scroll = false
+        else
+            g_db.smooth_scroll = not g_db.smooth_scroll
+        end
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cffB7A3CCCVarBrowser|r smooth scrolling "
+                .. (g_db.smooth_scroll and "on" or "off")
         )
         return
     end
@@ -4636,162 +4715,26 @@ SlashCmdList["CVARBROWSER"] = function(message)
         return
     end
 
-    if lower == "undo" then
-        local undo = frame.undo_stack or {}
-        local last = undo[#undo]
-        if not last or last.previous == nil then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r nothing to undo"
-            )
-            return
-        end
-        if not frame:IsShown() then
-            frame:Show()
-        end
-        local entry = by_name[last.name]
-        if not entry then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r CVar no longer exists: "
-                    .. last.name
-            )
-            return
-        end
-        if entry.readonly or entry.locked
-            or (entry.secure and InCombatLockdown()) then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r cannot undo " .. last.name
-                    .. " in its current state"
-            )
-            return
-        end
-        local current = entry.value
-        undo[#undo] = nil
-        local ok, result = pcall(SetCVarNative, last.name, last.previous)
-        if not ok or result == false then
-            undo[#undo + 1] = last
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r undo refused for " .. last.name
-            )
-            set_status("Undo refused: " .. last.name, "error")
-            return
-        end
-        read_cvar_value(entry)
-        if entry.value ~= last.previous then
-            undo[#undo + 1] = last
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r undo did not stick for "
-                    .. last.name
-            )
-            set_status("Undo did not stick: " .. last.name, "error")
-            return
-        end
-        local redo = frame.redo_stack or {}
-        frame.redo_stack = redo
-        redo[#redo + 1] = {
-            name = last.name,
-            previous = current,
-        }
-        apply_range(entry)
-        select_entry(entry)
-        update_rows()
-        update_detail()
-        local text = format(
-            "Undid %s; restored %s",
-            last.name,
-            display_edit_value(entry, entry.value)
-        )
-        set_status(text)
-        DEFAULT_CHAT_FRAME:AddMessage("|cffB7A3CCCVarBrowser|r " .. text)
-        return
-    end
-
-    if lower == "redo" then
-        local redo = frame.redo_stack or {}
-        local last = redo[#redo]
-        if not last or last.previous == nil then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r nothing to redo"
-            )
-            return
-        end
-        if not frame:IsShown() then
-            frame:Show()
-        end
-        local entry = by_name[last.name]
-        if not entry then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r CVar no longer exists: "
-                    .. last.name
-            )
-            return
-        end
-        if entry.readonly or entry.locked
-            or (entry.secure and InCombatLockdown()) then
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r cannot redo " .. last.name
-                    .. " in its current state"
-            )
-            return
-        end
-        local current = entry.value
-        redo[#redo] = nil
-        local ok, result = pcall(SetCVarNative, last.name, last.previous)
-        if not ok or result == false then
-            redo[#redo + 1] = last
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r redo refused for " .. last.name
-            )
-            set_status("Redo refused: " .. last.name, "error")
-            return
-        end
-        read_cvar_value(entry)
-        if entry.value ~= last.previous then
-            redo[#redo + 1] = last
-            DEFAULT_CHAT_FRAME:AddMessage(
-                "|cffB7A3CCCVarBrowser|r redo did not stick for "
-                    .. last.name
-            )
-            set_status("Redo did not stick: " .. last.name, "error")
-            return
-        end
-        local undo = frame.undo_stack or {}
-        frame.undo_stack = undo
-        undo[#undo + 1] = {
-            name = last.name,
-            previous = current,
-        }
-        if #undo > 20 then
-            table.remove(undo, 1)
-        end
-        apply_range(entry)
-        select_entry(entry)
-        update_rows()
-        update_detail()
-        local text = format(
-            "Redid %s; now %s",
-            last.name,
-            display_edit_value(entry, entry.value)
-        )
-        set_status(text)
-        DEFAULT_CHAT_FRAME:AddMessage("|cffB7A3CCCVarBrowser|r " .. text)
+    if lower == "undo" or lower == "redo" then
+        step_history(lower)
         return
     end
 
     if lower == "refresh" or lower == "rescan" then
-        if frame:IsShown() then
+        if g_frame:IsShown() then
             rescan()
         else
-            frame:Show()
+            g_frame:Show()
         end
         return
     end
 
-    if lower == "ranges" then
-        local only = message_text:match("^ranges%s+(.+)$")
-        only = only and trim(only):lower() or nil
+    if lower == "ranges" or lower:match("^ranges%s+") then
+        local only = lower:match("^ranges%s+(.+)$")
+        only = only and trim(only) or nil
         local names = {}
-        if db and type(db.observed) == "table" then
-            for name in pairs(db.observed) do
+        if g_db and type(g_db.observed) == "table" then
+            for name in pairs(g_db.observed) do
                 if not only or name:lower() == only then
                     names[#names + 1] = name
                 end
@@ -4813,8 +4756,8 @@ SlashCmdList["CVARBROWSER"] = function(message)
             )
         )
         for _, name in ipairs(names) do
-            local observed = db.observed[name]
-            local entry = by_name[name]
+            local observed = g_db.observed[name]
+            local entry = g_by_name[name]
             local range = format_observed_range(observed) or "?"
             local evidence = format_observed_evidence(observed) or "clamp"
             DEFAULT_CHAT_FRAME:AddMessage(
@@ -4836,11 +4779,11 @@ SlashCmdList["CVARBROWSER"] = function(message)
 
     if lower == "clearranges" then
         local count = 0
-        if db and type(db.observed) == "table" then
-            for _ in pairs(db.observed) do
+        if g_db and type(g_db.observed) == "table" then
+            for _ in pairs(g_db.observed) do
                 count = count + 1
             end
-            db.observed = {}
+            g_db.observed = {}
         end
         DEFAULT_CHAT_FRAME:AddMessage(
             format(
@@ -4849,61 +4792,62 @@ SlashCmdList["CVARBROWSER"] = function(message)
                 count == 1 and "" or "s"
             )
         )
-        if frame:IsShown() then
+        if g_frame:IsShown() then
             rescan()
         else
-            frame:Show()
+            g_frame:Show()
         end
         return
     end
 
-    local clear_name = message_text:match("^clearrange%s+(.+)$")
-    if clear_name then
-        clear_name = trim(clear_name)
-        local found = false
-        if db and type(db.observed) == "table" then
-            for name in pairs(db.observed) do
+    if lower:match("^clearrange%s+.") then
+        -- Match case-insensitively but echo the stored or typed casing.
+        local clear_name = trim(message_text:match("^%S+%s+(.+)$"))
+        local found
+        if g_db and type(g_db.observed) == "table" then
+            for name in pairs(g_db.observed) do
                 if name:lower() == clear_name:lower() then
-                    db.observed[name] = nil
-                    found = true
+                    g_db.observed[name] = nil
+                    found = name
                     break
                 end
             end
         end
         DEFAULT_CHAT_FRAME:AddMessage(
             "|cffB7A3CCCVarBrowser|r "
-                .. (found and "cleared " or "no observed range for ")
-                .. clear_name
+                .. (found and ("cleared " .. found)
+                    or ("no observed range for " .. clear_name))
         )
-        if frame:IsShown() then
+        if g_frame:IsShown() then
             rescan()
         else
-            frame:Show()
+            g_frame:Show()
         end
         return
     end
 
     if message_text ~= "" then
-        if not frame:IsShown() then
-            frame:Show()
+        if not g_frame:IsShown() then
+            g_frame:Show()
         end
-        search_box:SetText(message_text)
-        search_box:ClearFocus()
+        g_search_box:SetText(message_text)
+        g_search_box:ClearFocus()
         rebuild_view()
-        if #view > 0 then
-            select_entry(view[1])
-            if not view[1].readonly
-                and not (view[1].secure and InCombatLockdown()) then
-                detail_edit:SetFocus()
-                detail_edit:HighlightText()
+        if #g_view > 0 then
+            select_entry(g_view[1])
+            if not g_view[1].readonly
+                and not (g_view[1].secure and InCombatLockdown()) then
+                g_detail_edit:SetFocus()
+                g_detail_edit:HighlightText()
             end
         end
         return
     end
 
-    if frame:IsShown() then
-        frame:Hide()
+    if g_frame:IsShown() then
+        g_frame:Hide()
     else
-        frame:Show()
+        g_frame:Show()
     end
+end
 end

@@ -95,6 +95,7 @@ const DEFAULTS = {
   data: "sans",
   scale: 13,
   preset: "auto",
+  smooth: true,
 };
 
 const CVARS = [
@@ -134,6 +135,23 @@ const CVARS = [
     observedMax: 50,
     scope: "Character",
     category: "Game",
+  },
+  {
+    name: "nameplateOverlapV",
+    help: "Vertical overlap of stacked nameplates [0.5, 2.5].",
+    range: "max 1.6",
+    source: "observed",
+    observed: "max: 3 -> 1.6",
+    helpRange: "0.5 - 2.5",
+    value: "1.1",
+    def: "1.1",
+    helpMin: 0.5,
+    helpMax: 2.5,
+    observedMax: 1.6,
+    scope: "Character",
+    category: "Game",
+    locked: true,
+    secure: true,
   },
   {
     name: "farclip",
@@ -255,7 +273,7 @@ const CVARS = [
   },
   {
     name: "waterDetail",
-    help: "Water detail level.",
+    help: "Water detail level. 0 = low, 1 = fair, 2 = good, 3 = ultra.",
     range: "",
     source: "",
     value: "3",
@@ -332,8 +350,18 @@ const CVARS = [
     help: "Tracked profession recipes.",
     range: "",
     source: "",
-    value: "v21##>@",
+    value: "v2\u0001\u0004\u0012##>@",
     def: "",
+    scope: "Character",
+    category: "Game",
+  },
+  {
+    name: "closedInfoFrames",
+    help: "Bitfield for which help frames have been acknowledged by the user.",
+    range: "",
+    source: "",
+    value: "\u0003\u0080\u0010\u0001",
+    def: "\u0001\u0080\u0010\u0001",
     scope: "Character",
     category: "Game",
   },
@@ -353,9 +381,11 @@ const state = {
   data: DEFAULTS.data,
   scale: DEFAULTS.scale,
   preset: DEFAULTS.preset,
+  smooth: DEFAULTS.smooth,
 };
 
 const history = { undo: [], redo: [] };
+let searchNavigated = false;
 
 const app = document.getElementById("app");
 const rowsEl = document.getElementById("rows");
@@ -366,6 +396,7 @@ const countEl = document.getElementById("count");
 const searchEl = document.getElementById("search");
 const changedOnlyEl = document.getElementById("changed-only");
 const gridToggleEl = document.getElementById("grid-toggle");
+const smoothToggleEl = document.getElementById("smooth-toggle");
 const fontSelectEl = document.getElementById("font-select");
 const dataSelectEl = document.getElementById("data-select");
 const scaleSwitchEl = document.getElementById("scale-switch");
@@ -389,6 +420,8 @@ const undoButtonEl = document.getElementById("undo-button");
 const redoButtonEl = document.getElementById("redo-button");
 const copyButtonEl = document.getElementById("copy-button");
 const copyMenuEl = document.getElementById("copy-menu");
+const copyBoxEl = document.getElementById("copy-box");
+const copyBoxInputEl = document.getElementById("copy-box-input");
 const sizeButtonEl = document.getElementById("size-button");
 const sizeMenuEl = document.getElementById("size-menu");
 const scenariosEl = document.getElementById("scenarios");
@@ -405,13 +438,80 @@ function isChanged(cvar) {
   return cvar.value !== cvar.def;
 }
 
-function cvarType(cvar) {
-  const text = `${cvar.value} ${cvar.def}`;
-  if (text.includes("##")) {
-    return "Serialized";
+// Runtime BITFIELD_CVARS: binary CVars known by name.
+const BITFIELD_CVARS = new Set(["closedInfoFrames"]);
+
+/* Binary kind, as the runtime's read_cvar_value flags it: bitfields by name,
+   serialized when the value holds a control or high byte. Values are byte
+   strings, one char per byte, like Lua strings. */
+function binaryKind(cvar) {
+  if (BITFIELD_CVARS.has(cvar.name)) {
+    return "Bitfield";
   }
-  const numeric = (s) => s === "" || Number.isFinite(Number(s));
-  return numeric(cvar.value) && numeric(cvar.def) ? "Number" : "String";
+  return /[\x00-\x1f\x7f-\xff]/.test(cvar.value) ? "Serialized" : null;
+}
+
+/* Bitfield and serialized values edit as hex (runtime display_edit_value):
+   two uppercase digits per byte. */
+function editText(cvar, value) {
+  if (!binaryKind(cvar)) {
+    return value;
+  }
+  return Array.from(value, (ch) => ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")).join("");
+}
+
+/* Runtime hex_to_bitfield: whitespace is ignored, empty stays empty, and an
+   odd length or a non-hex digit is invalid (null). */
+function hexToBytes(text) {
+  const hex = text.replace(/\s+/g, "");
+  if (hex.length % 2 !== 0 || /[^0-9a-f]/i.test(hex)) {
+    return null;
+  }
+  return hex.replace(/../g, (pair) => String.fromCharCode(parseInt(pair, 16)));
+}
+
+/* Runtime parse_enum_help: at least two `N = label` or `N: label` pairs in
+   the help text, each label starting with a letter and at most 32 chars. */
+function helpEnum(help) {
+  if (!help) {
+    return null;
+  }
+  const options = [];
+  for (const [, value, rawLabel] of help.matchAll(/([+-]?\d+)\s*[=:]\s*([A-Za-z][A-Za-z0-9\s./-]*)/g)) {
+    const label = rawLabel.trim();
+    if (label !== "" && label.length <= 32) {
+      options.push(`${value} = ${label}`);
+    }
+  }
+  return options.length >= 2 ? options : null;
+}
+
+/* Value type in the runtime's infer_value_type order: Bitfield, Serialized,
+   Enum (help parses as an enum), Unknown (no value), Boolean, Number, List,
+   Text. The meta line, the Type filter, and the type sort all use it. */
+function valueType(cvar) {
+  const kind = binaryKind(cvar);
+  if (kind) {
+    return kind;
+  }
+  if (helpEnum(cvar.help)) {
+    return "Enum";
+  }
+  const value = cvar.value;
+  if (value == null) {
+    return "Unknown";
+  }
+  if (value === "0" || value === "1" || value === "true" || value === "false") {
+    return "Boolean";
+  }
+  if (value.trim() !== "" && Number.isFinite(Number(value))) {
+    return "Number";
+  }
+  return /[,;\s]/.test(value) ? "List" : "Text";
+}
+
+function isEditable(cvar) {
+  return !cvar.readonly && !cvar.locked;
 }
 
 function selectedCvar() {
@@ -466,7 +566,7 @@ function matchesFilters(cvar) {
   if (f.category !== "all" && cvar.category.toLowerCase() !== f.category) {
     return false;
   }
-  if (f.type !== "all" && cvarType(cvar).toLowerCase() !== f.type) {
+  if (f.type !== "all" && valueType(cvar).toLowerCase() !== f.type) {
     return false;
   }
   return f.has.every((facet) => hasFacet(cvar, facet));
@@ -493,20 +593,28 @@ function matchesQuery(cvar) {
   );
 }
 
+/* Runtime rebuild_view sort: lowercase keys compared bytewise; the
+   direction flips only the key, and ties always fall back to name
+   ascending. Changed asc puts unchanged rows first; rows with no range
+   width sort last in both directions. */
 function compareCvars(a, b) {
   const dir = state.sort.dir === "desc" ? -1 : 1;
-  const byName = (x, y) => x.name.localeCompare(y.name);
+  const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+  const byName = cmp(a.name.toLowerCase(), b.name.toLowerCase());
+  let diff;
   switch (state.sort.key) {
     case "type":
-      return dir * (cvarType(a).localeCompare(cvarType(b)) || byName(a, b));
+      diff = cmp(valueType(a).toLowerCase(), valueType(b).toLowerCase());
+      break;
     case "scope":
-      return dir * (a.scope.localeCompare(b.scope) || byName(a, b));
+      diff = cmp(a.scope.toLowerCase(), b.scope.toLowerCase());
+      break;
     case "category":
-      return dir * (a.category.localeCompare(b.category) || byName(a, b));
-    case "changed": {
-      const diff = isChanged(a) === isChanged(b) ? byName(a, b) : isChanged(a) ? -1 : 1;
-      return dir * diff;
-    }
+      diff = cmp(a.category.toLowerCase(), b.category.toLowerCase());
+      break;
+    case "changed":
+      diff = Number(isChanged(a)) - Number(isChanged(b));
+      break;
     case "range": {
       const width = (c) => {
         const mins = [c.helpMin, c.observedMin].filter((v) => v != null);
@@ -515,14 +623,17 @@ function compareCvars(a, b) {
       };
       const wa = width(a);
       const wb = width(b);
-      if (wa == null && wb == null) return byName(a, b);
+      if (wa == null && wb == null) return byName;
       if (wa == null) return 1;
       if (wb == null) return -1;
-      return dir * (wa - wb || byName(a, b));
+      diff = wa - wb;
+      break;
     }
     default:
-      return dir * byName(a, b);
+      diff = byName;
+      break;
   }
+  return dir * diff || byName;
 }
 
 function filteredCvars() {
@@ -653,7 +764,10 @@ function renderRows() {
       const selected = cvar.name === state.selected;
       const changed = isChanged(cvar);
       const readonly = cvar.readonly ? "readonly" : "";
-      const defDisplay = (cvar.def === "" || /^\s*$/.test(cvar.def)) ? "empty" : cvar.def;
+      const kind = binaryKind(cvar);
+      // Binary values show their size, never their bytes (runtime render_row).
+      const defDisplay = kind ? `${cvar.def.length} bytes` : /^\s*$/.test(cvar.def) ? "empty" : cvar.def;
+      const valueDisplay = kind ? `${kind} (${cvar.value.length} bytes)` : cvar.value;
       const defaultValue = changed
         ? `<span class="default-value">(Default: ${escapeHtml(defDisplay)})</span>`
         : "";
@@ -661,7 +775,7 @@ function renderRows() {
         <div class="row ${selected ? "selected" : ""} ${readonly}" data-name="${escapeHtml(cvar.name)}" role="button" tabindex="0">
           <span class="name ${changed ? "changed" : ""}">${escapeHtml(cvar.name)}</span>
           <span class="gauge-cell">${gaugeFor(cvar)}</span>
-          <span class="value">${escapeHtml(cvar.value)}${defaultValue}</span>
+          <span class="value">${escapeHtml(valueDisplay)}${defaultValue}</span>
         </div>`;
     })
     .join("");
@@ -694,25 +808,35 @@ function renderDetail() {
     detailNameEl.classList.add("readonly");
   }
 
-  const defDisplay = (cvar.def === "" || /^\s*$/.test(cvar.def)) ? "empty" : cvar.def;
+  const kind = binaryKind(cvar);
+  const defDisplay = kind
+    ? `${kind} (${cvar.def.length} bytes)`
+    : /^\s*$/.test(cvar.def) ? "empty" : cvar.def;
+  // Up to 8 parts in the runtime's order (META_MAX_PARTS = 8). Range help
+  // and Help range never appear together, so the fullest line is 8 parts;
+  // the Secure part is never dropped.
   const meta = [
     { text: cvar.scope },
     { text: cvar.category },
+    { text: `Type: ${valueType(cvar)}` },
     { text: `Default: ${defDisplay}` },
   ];
   if (cvar.range && cvar.source === "help") {
     meta.push({ text: `Range help: ${cvar.range}` });
-  } else if (cvar.range && cvar.source && cvar.source !== "observed") {
-    meta.push({ text: `Range ${cvar.source}: ${cvar.range}` });
   }
   if (cvar.observed) {
     meta.push({ text: `Observed: ${cvar.observed}`, className: "meta-observed" });
   }
+  if (cvar.helpRange && cvar.source === "observed" && cvar.helpRange !== cvar.range) {
+    meta.push({ text: `Help range: ${cvar.helpRange}` });
+  }
   if (cvar.readonly) {
     meta.push({ text: "Read-only" });
+  } else if (cvar.locked) {
+    meta.push({ text: "Locked" });
   }
   if (cvar.secure) {
-    meta.push({ text: "Secure in combat" });
+    meta.push({ text: "Secure: locked in combat", className: "meta-warning" });
   }
   detailMetaEl.innerHTML = meta
     .filter(({ text }) => Boolean(text))
@@ -720,10 +844,11 @@ function renderDetail() {
     .join("");
 
   detailHelpEl.textContent = cvar.help ?? "";
-  valueEditEl.value = cvar.value;
-  valueEditEl.disabled = Boolean(cvar.readonly);
-  setButtonEl.disabled = Boolean(cvar.readonly);
-  resetButtonEl.disabled = Boolean(cvar.readonly);
+  valueEditEl.value = editText(cvar, cvar.value);
+  const editable = isEditable(cvar);
+  valueEditEl.disabled = !editable;
+  setButtonEl.disabled = !editable;
+  resetButtonEl.disabled = !editable;
   setStatus("", "");
 }
 
@@ -753,6 +878,96 @@ function updateScrollbar() {
   scrollbarThumb.style.top = `${top}px`;
 }
 
+/* ---- Scrolling ----
+   Mirrors the runtime's g_frame.scroll_frame_to / smooth_step. Every offset
+   is a whole pixel. A smooth scroll records a target and eases toward it:
+   each frame moves round(diff * min(1, elapsed * 16)) px, at least 1px, and
+   the last step lands exactly on the target. With smooth off (lab toggle,
+   `/cvars smooth off`) the same requests jump straight to the target. */
+const SCROLL_EASE_RATE = 16;
+const WHEEL_ROWS = 3;
+const FILTER_WHEEL_STEP = 40;
+const scrollGlides = new WeakMap();
+
+function rowHeight() {
+  return (SCALES[state.scale] ?? SCALES[DEFAULTS.scale]).row;
+}
+
+function scrollRange(el) {
+  return Math.max(0, el.scrollHeight - el.clientHeight);
+}
+
+function glideStep(el, now) {
+  const glide = scrollGlides.get(el);
+  if (!glide) {
+    return;
+  }
+  const elapsed = glide.last ? (now - glide.last) / 1000 : 1 / 60;
+  glide.last = now;
+  const target = Math.min(glide.target, scrollRange(el));
+  const current = Math.round(el.scrollTop);
+  const diff = target - current;
+  if (Math.abs(diff) < 1) {
+    scrollGlides.delete(el);
+    el.scrollTop = target;
+    return;
+  }
+  let step = Math.round(diff * Math.min(1, elapsed * SCROLL_EASE_RATE));
+  if (step === 0) {
+    step = Math.sign(diff);
+  }
+  el.scrollTop = current + step;
+  if (Math.round(el.scrollTop) === current) {
+    // Browser zoom can quantize scrollTop; never let a glide stall.
+    scrollGlides.delete(el);
+    el.scrollTop = target;
+    return;
+  }
+  glide.frame = requestAnimationFrame((time) => glideStep(el, time));
+}
+
+function scrollFrameTo(el, value, smooth) {
+  const target = Math.min(Math.max(Math.round(value), 0), scrollRange(el));
+  const glide = scrollGlides.get(el);
+  if (smooth && state.smooth) {
+    if (glide) {
+      glide.target = target;
+    } else {
+      const next = { target, last: 0, frame: 0 };
+      scrollGlides.set(el, next);
+      next.frame = requestAnimationFrame((time) => glideStep(el, time));
+    }
+    return;
+  }
+  if (glide) {
+    cancelAnimationFrame(glide.frame);
+    scrollGlides.delete(el);
+  }
+  el.scrollTop = target;
+}
+
+/* Wheel notches add onto the pending target, not the current offset, so a
+   fast spin accumulates. */
+function scrollBase(el) {
+  return scrollGlides.get(el)?.target ?? el.scrollTop;
+}
+
+function wheelNotches(event) {
+  if (event.deltaMode === 1) {
+    return event.deltaY / 3; // lines: 3 per notch
+  }
+  if (event.deltaMode === 2) {
+    return event.deltaY; // pages
+  }
+  return event.deltaY / 100; // pixels: ~100 per notch
+}
+
+/* Search, filter, regex, and sort changes rebuild the view at the top,
+   instantly, dropping any pending glide. */
+function jumpListToTop() {
+  scrollFrameTo(viewport, 0, false);
+}
+
 function applyValue() {
   const cvar = selectedCvar();
   if (!cvar) {
@@ -762,11 +977,23 @@ function applyValue() {
     setStatus("This CVar is read-only.", "error");
     return;
   }
+  if (cvar.locked) {
+    setStatus("This CVar is locked.", "error");
+    return;
+  }
 
-  const requested = valueEditEl.value.trim();
+  let requested = valueEditEl.value.trim();
   const previous = cvar.value;
+  if (binaryKind(cvar)) {
+    const decoded = hexToBytes(requested);
+    if (decoded == null) {
+      setStatus("Bitfield/serialized value must be an even-length hex string.", "error");
+      return;
+    }
+    requested = decoded;
+  }
   if (cvar.ignoreSet) {
-    setStatus(`Ignored: ${cvar.name} stays ${previous}`, "error");
+    setStatus(`Ignored: ${cvar.name} stays ${editText(cvar, previous)}`, "error");
     return;
   }
 
@@ -811,8 +1038,8 @@ function applyValue() {
   render();
   setStatus(
     outcome === "clamped"
-      ? `${cvar.name} clamped to ${actual} (asked ${requested})`
-      : `Set ${cvar.name} = ${actual}`,
+      ? `${cvar.name} clamped to ${editText(cvar, actual)} (asked ${editText(cvar, requested)})`
+      : `Set ${cvar.name} = ${editText(cvar, actual)}`,
     outcome === "clamped" ? "warning" : "success",
   );
   valueEditEl.focus();
@@ -821,7 +1048,7 @@ function applyValue() {
 
 function resetValue() {
   const cvar = selectedCvar();
-  if (!cvar || cvar.readonly) {
+  if (!cvar || !isEditable(cvar)) {
     return;
   }
   if (cvar.value !== cvar.def) {
@@ -831,7 +1058,7 @@ function resetValue() {
   cvar.clampedAt = null;
   cvar.clampSide = null;
   render();
-  setStatus(`Reset ${cvar.name} to ${cvar.def}`, "success");
+  setStatus(`Reset ${cvar.name} to ${editText(cvar, cvar.def)}`, "success");
   valueEditEl.focus();
   valueEditEl.select();
 }
@@ -861,7 +1088,7 @@ function undo() {
   history.redo.push(entry);
   state.selected = entry.name;
   render();
-  setStatus(`Undid ${entry.name} to ${entry.from}`, "success");
+  setStatus(`Undid ${entry.name} to ${editText(cvar, entry.from)}`, "success");
 }
 
 function redo() {
@@ -879,7 +1106,7 @@ function redo() {
   history.undo.push(entry);
   state.selected = entry.name;
   render();
-  setStatus(`Redid ${entry.name} to ${entry.to}`, "success");
+  setStatus(`Redid ${entry.name} to ${editText(cvar, entry.to)}`, "success");
 }
 
 /* ---- Control row: chips, menus, history, copy ---- */
@@ -942,7 +1169,7 @@ function filterMenuHtml() {
     </div>
     <div class="menu-group">
       <span class="menu-group-label">Type</span>
-      ${rows("type", [["all", "All"], ["number", "Number"], ["string", "String"], ["serialized", "Serialized"]], f.type)}
+      ${rows("type", [["all", "All"], ["number", "Number"], ["text", "Text"], ["boolean", "Boolean"], ["enum", "Enum"], ["list", "List"], ["bitfield", "Bitfield"], ["serialized", "Serialized"]], f.type)}
     </div>
     <div class="menu-group">
       <span class="menu-group-label">Has</span>
@@ -993,11 +1220,24 @@ function copyMenuHtml() {
     .join("");
 }
 
-function displayValue(cvar) {
-  if (cvarType(cvar) === "Serialized") {
-    return `Serialized (${cvar.value.length} bytes)`;
-  }
-  return cvar.value;
+/* CopyToClipboard is protected for addons, so nothing writes the clipboard:
+   copying opens a small box under the Copy button holding the text, focused
+   and fully highlighted, and the status line asks for Ctrl+C. */
+let copyBoxText = "";
+
+function highlightCopyBox() {
+  // Select everything with the caret at the start, so long text shows its
+  // beginning.
+  copyBoxInputEl.setSelectionRange(0, copyBoxInputEl.value.length, "backward");
+  copyBoxInputEl.scrollLeft = 0;
+}
+
+function showCopyBox(text) {
+  copyBoxText = text;
+  copyBoxEl.hidden = false;
+  copyBoxInputEl.value = text;
+  copyBoxInputEl.focus();
+  highlightCopyBox();
 }
 
 function copyField(key) {
@@ -1006,7 +1246,7 @@ function copyField(key) {
     return;
   }
   const fields = {
-    value: displayValue(cvar),
+    value: editText(cvar, cvar.value),
     raw: cvar.value,
     default: cvar.def,
     name: cvar.name,
@@ -1014,31 +1254,14 @@ function copyField(key) {
     range: cvar.range ?? "",
   };
   const text = fields[key] ?? "";
-  const label = { value: "value", raw: "raw value", default: "default", name: "name", help: "help", range: "range" }[key] ?? key;
-  const done = () => setStatus(`Copied ${label} of ${cvar.name}`, "success");
-  const fallback = () => {
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.appendChild(area);
-    area.select();
-    try {
-      if (document.execCommand("copy")) {
-        done();
-      } else {
-        setStatus(`Could not copy ${label}`, "error");
-      }
-    } catch {
-      setStatus(`Could not copy ${label}`, "error");
-    }
-    area.remove();
-  };
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(text).then(done, fallback);
-  } else {
-    fallback();
+  if (text === "") {
+    // The runtime says this in chat; the mockup borrows the status line.
+    setStatus(`Nothing to copy for ${cvar.name}`, "");
+    return;
   }
+  closeMenus();
+  showCopyBox(text);
+  setStatus(`Press Ctrl+C to copy ${key}: ${cvar.name}`, "success");
 }
 
 let openMenu = null;
@@ -1048,6 +1271,7 @@ function closeMenus() {
   for (const menu of [filterMenuEl, sortMenuEl, copyMenuEl, sizeMenuEl]) {
     menu.hidden = true;
   }
+  copyBoxEl.hidden = true;
   for (const chip of [filterChipEl, sortChipEl, copyButtonEl, sizeButtonEl]) {
     chip.setAttribute("aria-expanded", "false");
   }
@@ -1072,7 +1296,7 @@ function clearFilters() {
   state.filters = { scope: "all", category: "all", type: "all", has: [] };
   state.changedOnly = false;
   changedOnlyEl.checked = false;
-  viewport.scrollTop = 0;
+  jumpListToTop();
   render();
   setStatus("Filters cleared", "");
 }
@@ -1081,6 +1305,7 @@ function applyScenario(name) {
   closeMenus();
   state.query = "";
   searchEl.value = "";
+  searchNavigated = false;
   state.regex = false;
   state.changedOnly = false;
   changedOnlyEl.checked = false;
@@ -1110,7 +1335,7 @@ function applyScenario(name) {
     default:
       break;
   }
-  viewport.scrollTop = 0;
+  jumpListToTop();
   render();
   // Posted after the render: renderDetail clears the status line, and the
   // scenario note must live its full 30s like every other status.
@@ -1175,6 +1400,12 @@ function applyFonts() {
 
 function applyScale(scale) {
   const resolved = SCALES[scale] ?? SCALES[DEFAULTS.scale];
+  // The text-size switch changes row height, so it changes the scroll range
+  // the way a runtime size preset does (OnScrollRangeChanged): a list at the
+  // bottom stays pinned there. Otherwise the browser clamps the offset and
+  // glideStep clamps any pending target into the new range.
+  const before = scrollRange(viewport);
+  const wasAtBottom = before > 0 && viewport.scrollTop >= before - 0.5;
   state.scale = SCALES[scale] ? Number(scale) : DEFAULTS.scale;
   app.style.setProperty("--body-size", `${state.scale}px`);
   app.style.setProperty("--small-size", `${resolved.small}px`);
@@ -1182,6 +1413,9 @@ function applyScale(scale) {
   app.style.setProperty("--detail-name-size", `${resolved.detail}px`);
   for (const button of scaleSwitchEl.querySelectorAll("button")) {
     button.classList.toggle("active", Number(button.dataset.scale) === state.scale);
+  }
+  if (wasAtBottom) {
+    scrollFrameTo(viewport, scrollRange(viewport), false);
   }
   updateSelection();
   updateScrollbar();
@@ -1223,6 +1457,7 @@ function saveState() {
         data: state.data,
         scale: state.scale,
         preset: state.preset,
+        smooth: state.smooth,
       }),
     );
   } catch {
@@ -1244,6 +1479,7 @@ function loadState() {
     if (PRESETS.some((option) => option.value === saved.preset)) {
       state.preset = saved.preset;
     }
+    if (typeof saved.smooth === "boolean") state.smooth = saved.smooth;
   } catch {
     // Ignore corrupt storage.
   }
@@ -1255,6 +1491,8 @@ function resetOptions() {
   state.data = DEFAULTS.data;
   state.scale = DEFAULTS.scale;
   state.preset = DEFAULTS.preset;
+  state.smooth = DEFAULTS.smooth;
+  smoothToggleEl.checked = state.smooth;
   applyPalette(state.palette);
   applyFonts();
   applyScale(state.scale);
@@ -1286,7 +1524,8 @@ rowsEl.addEventListener("keydown", (event) => {
 
 searchEl.addEventListener("input", () => {
   state.query = searchEl.value;
-  viewport.scrollTop = 0;
+  searchNavigated = false;
+  jumpListToTop();
   render();
 });
 
@@ -1307,23 +1546,43 @@ searchEl.addEventListener("keydown", (event) => {
     searchEl.blur();
     return;
   }
+  if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+    event.preventDefault();
+    const list = filteredCvars();
+    if (list.length === 0) {
+      return;
+    }
+    let index = Math.max(0, list.findIndex((cvar) => cvar.name === state.selected));
+    index = event.key === "ArrowDown" ? Math.min(index + 1, list.length - 1) : Math.max(index - 1, 0);
+    searchNavigated = true;
+    state.selected = list[index].name;
+    render();
+    // Glide so the selected row sits at the top of the list.
+    scrollFrameTo(viewport, index * rowHeight(), true);
+    return;
+  }
   if (event.key !== "Enter") {
     return;
   }
   event.preventDefault();
-  const first = filteredCvars()[0];
-  if (!first) {
+  // Enter keeps a row picked with the arrow keys; with no arrow navigation
+  // since the text last changed, it takes the first result.
+  const entry = (searchNavigated && selectedCvar()) || filteredCvars()[0];
+  if (!entry) {
+    searchEl.blur();
     return;
   }
-  state.selected = first.name;
+  state.selected = entry.name;
   render();
-  valueEditEl.focus();
-  valueEditEl.select();
+  if (isEditable(entry)) {
+    valueEditEl.focus();
+    valueEditEl.select();
+  }
 });
 
 changedOnlyEl.addEventListener("change", () => {
   state.changedOnly = changedOnlyEl.checked;
-  viewport.scrollTop = 0;
+  jumpListToTop();
   render();
 });
 
@@ -1351,22 +1610,34 @@ scrollbarThumb.addEventListener("pointermove", (event) => {
   if (!scrollDrag) {
     return;
   }
-  const scrollHeight = viewport.scrollHeight;
-  const clientHeight = viewport.clientHeight;
-  const maxScroll = scrollHeight - clientHeight;
   const maxTop = scrollbar.clientHeight - scrollbarThumb.offsetHeight;
   if (maxTop <= 0) {
     return;
   }
+  // 1:1 with the cursor while held: no glide, whole-pixel offsets.
   const delta = event.clientY - scrollDrag.y;
-  viewport.scrollTop = scrollDrag.scrollTop + (delta / maxTop) * maxScroll;
+  scrollFrameTo(viewport, scrollDrag.scrollTop + (delta / maxTop) * scrollRange(viewport), false);
 });
-scrollbarThumb.addEventListener("pointerup", () => {
+// Release settles on the nearest whole row so the top row is never left
+// half-clipped.
+function endScrollDrag() {
+  if (!scrollDrag) {
+    return;
+  }
   scrollDrag = null;
-});
-scrollbarThumb.addEventListener("pointercancel", () => {
-  scrollDrag = null;
-});
+  const row = rowHeight();
+  scrollFrameTo(viewport, Math.round(viewport.scrollTop / row) * row, true);
+}
+scrollbarThumb.addEventListener("pointerup", endScrollDrag);
+scrollbarThumb.addEventListener("pointercancel", endScrollDrag);
+
+viewport.addEventListener("wheel", (event) => {
+  if (event.ctrlKey) {
+    return;
+  }
+  event.preventDefault();
+  scrollFrameTo(viewport, scrollBase(viewport) + wheelNotches(event) * WHEEL_ROWS * rowHeight(), true);
+}, { passive: false });
 
 paletteSwitchEl.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-palette]");
@@ -1402,6 +1673,11 @@ gridToggleEl.addEventListener("change", () => {
   app.classList.toggle("show-grid", gridToggleEl.checked);
 });
 
+smoothToggleEl.addEventListener("change", () => {
+  state.smooth = smoothToggleEl.checked;
+  saveState();
+});
+
 document.getElementById("reset").addEventListener("click", resetOptions);
 
 document.getElementById("close").addEventListener("click", () => {
@@ -1410,7 +1686,7 @@ document.getElementById("close").addEventListener("click", () => {
 
 regexChipEl.addEventListener("click", () => {
   state.regex = !state.regex;
-  viewport.scrollTop = 0;
+  jumpListToTop();
   render();
   setStatus(state.regex ? "Search treats the query as a regular expression" : "Literal search", "");
 });
@@ -1442,10 +1718,18 @@ filterMenuEl.addEventListener("click", (event) => {
   } else {
     state.filters[facet] = value;
   }
-  viewport.scrollTop = 0;
+  jumpListToTop();
   render();
   setStatus(activeFilterCount() ? `Filters: ${filterSummary()}` : "Filters cleared", "");
 });
+
+filterMenuEl.addEventListener("wheel", (event) => {
+  if (event.ctrlKey) {
+    return;
+  }
+  event.preventDefault();
+  scrollFrameTo(filterMenuEl, scrollBase(filterMenuEl) + wheelNotches(event) * FILTER_WHEEL_STEP, true);
+}, { passive: false });
 
 sortChipEl.addEventListener("click", () => {
   toggleMenu(sortChipEl, sortMenuEl, sortMenuHtml);
@@ -1463,6 +1747,7 @@ sortMenuEl.addEventListener("click", (event) => {
     // "changed" reads best with changed rows first; the rest default to a-z.
     state.sort = { key, dir: key === "changed" ? "desc" : "asc" };
   }
+  jumpListToTop();
   render();
   setStatus(`Sorted by ${key} ${state.sort.dir}`, "");
 });
@@ -1484,6 +1769,23 @@ copyMenuEl.addEventListener("click", (event) => {
   }
   closeMenus();
   copyField(row.dataset.copy);
+});
+
+/* Escape, Enter, or losing focus closes the copy box. Typing changes
+   nothing: the text snaps back and stays highlighted. */
+copyBoxInputEl.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" || event.key === "Enter") {
+    event.preventDefault();
+    event.stopPropagation();
+    copyBoxInputEl.blur();
+  }
+});
+copyBoxInputEl.addEventListener("input", () => {
+  copyBoxInputEl.value = copyBoxText;
+  highlightCopyBox();
+});
+copyBoxInputEl.addEventListener("blur", () => {
+  copyBoxEl.hidden = true;
 });
 
 sizeButtonEl.addEventListener("click", () => {
@@ -1539,6 +1841,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 loadState();
+smoothToggleEl.checked = state.smooth;
 applyPalette(state.palette);
 applyFonts();
 applyScale(state.scale);

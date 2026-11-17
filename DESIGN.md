@@ -30,10 +30,17 @@ below incorporates that critique.
 ## Visual language
 
 Flat near-black with a faint plum cast. 1px hairlines, square corners, no
-gloss, no gradients, no ornate Blizzard chrome. The window renders on a 1:1
-pixel grid: effective scale is always 1.0 — one physical screen pixel per UI
-unit — so every border and separator is exactly 1 physical pixel and the
-hairlines stay separable from the meta line at every size preset.
+gloss, no gradients, no drop shadows, no ornate Blizzard chrome. Popups
+(menus, the copy box) are a `surface` fill with a 1px border (`border`;
+`accent` on the always-focused copy box) and no shadow, matching the
+runtime's flat frames. The window renders on a 1:1
+pixel grid: one UI unit is one physical screen pixel. The frame's effective
+scale is 768 / physical screen height (UI space is 768 units tall), whatever
+the client `uiScale` — it is not 1.0 — so every border and separator is
+exactly 1 physical pixel and the hairlines stay separable from the meta line
+at every size preset. Positions stay on the grid too: the title-bar drag,
+single-anchor text origins, and list and popup scroll offsets all land on
+whole pixels.
 
 ### Primary palette: Grim plum
 
@@ -102,8 +109,8 @@ natural width.
 
 The title-bar **Size** menu offers Auto / Compact / Standard / Large. Size
 comes only from these presets; the old percentage-based scaling control is
-gone entirely. Every preset renders at effective scale 1.0 — one physical
-screen pixel per UI unit, a 1:1 pixel grid — with the integer font sizes
+gone entirely. Every preset renders on the same 1:1 grid, one UI unit per
+physical screen pixel (see Visual language), with the integer font sizes
 from the type table above.
 
 | Preset | Window | Detail panel | Title / detail / body / meta / check |
@@ -224,7 +231,8 @@ across rows. Domain is the union of help and observed bounds.
   - **Filter menu**: popup panel (`surface`, 1px border, no radius),
     grouped rows with 11px muted group labels — Scope (All / Account /
     Character / Local), Category (All + the categories present in the
-    list), Type (All / Number / String / Serialized), Has (Range / Observed
+    list), Type (All / Number / Text / Boolean / Enum / List / Bitfield /
+    Serialized, a fixed list; see Value type), Has (Range / Observed
     bounds / Help range / Default / Differs from default). Scope, category,
     and type are single-select; Has is multi-select and ANDs. Checked rows
     show the same drawn tick as the checkbox. The header reads `Filters`
@@ -236,11 +244,12 @@ across rows. Domain is the union of help and observed bounds.
   - **Popup height rule**: no popup may exceed the window. The control
     row's menus open at y=130 in the 678px content box and are capped at
     536px tall (12px of air above the window edge); taller content — the
-    filter menu at its natural ~590px — scrolls inside the panel over an
-    8px muted thumb in the list-scrollbar language. The control row's menu
+    filter menu at its natural ~686px — scrolls inside the panel over an
+    8px muted thumb in the list-scrollbar language. The wheel glides the
+    panel 40px per notch (see Scrolling). The control row's menu
     rows are a fixed 24px with nowrap labels, so reachability is identical
     at 13/14/15/16 text sizes: the Has group always ends up behind the same
-    ~55px of scroll and every row is reachable in all cases. Opening upward
+    ~150px of scroll and every row is reachable in all cases. Opening upward
     is not an option — the control row sits near the window's top edge.
   - **Sort chip**: 10×10 sort glyph at 4px from the chip's left edge +
     `Sort` label at x=18 (icon + 4px gap) + current sort, e.g. `name asc`,
@@ -262,37 +271,86 @@ across rows. Domain is the union of help and observed bounds.
     CVar and select its row.
   - **Copy**: `Copy` button opening a compact menu — Copy value, Copy raw
     value, Copy default, Copy name, Copy help, Copy range — mirroring
-    `/cvars copy`. `value` is the display value (`Serialized (N bytes)` for
-    serialized); `raw` is the stored string. Help/range rows are disabled
-    with a muted `none` note when the CVar has none. The whole button is
-    disabled when no row is selected. Copies use the client clipboard API
-    (mockup: `navigator.clipboard`) and confirm in the status line.
+    `/cvars copy`. `value` is the text the value field edits (hex for
+    serialized and bitfield values); `raw` is the stored string. Help/range
+    rows are disabled with a muted `none` note when the CVar has none. The
+    whole button is disabled when no row is selected. Addons cannot write
+    the clipboard (`CopyToClipboard` is protected), so a copy row closes the
+    menus and opens the copy box.
+  - **Copy box**: a 280×30 popup in the copy menu's slot — TOPLEFT on the
+    Copy button's BOTTOMLEFT, 4px down. `surface` fill, a 1px `accent`
+    border, and no shadow. The accent border is there because the box only
+    exists while its text has focus, so it matches the focused search box
+    and value field. Inside, one edit box inset 10px from each side (2px
+    text insets, so text starts 12px in), in the body font, body size,
+    `text` color. It holds the copied text focused and fully highlighted —
+    highlight `accent` at 35% — with the caret at the start, so long text
+    shows its beginning. The status line
+    reads `Press Ctrl+C to copy <field>: <cvar name>`, where field is the
+    `/cvars copy` key (`value`, `raw`, `default`, `name`, `help`, `range`).
+    Escape, Enter, or losing focus closes it, and closing the menus closes
+    it too. Typing changes nothing: the text snaps back and stays
+    highlighted. A field with no text (a blank default) opens no box; the
+    runtime says `nothing to copy for <cvar>` in chat (the mockup uses the
+    status line).
 - **List header**: 11px muted labels raised 1px — center offset +1 in the
   16px header band — for 3px clearance above the separator, whose 1px line
   runs along the band's bottom to the scrollbar column's right edge — the
   same right end as the detail separator, so the two separators bracket the
   scrollbar.
-- **Rows**: 22px, hover fill, selected accent fill + 2px left accent bar.
+- **Rows**: 22px; selected rows get the accent fill + 2px left accent bar.
+  The `surface_hover` fill shows only while the pointer is over a row that
+  is not selected: selecting the hovered row clears it, and after a scroll
+  it follows whatever row is now under the pointer, never the row that used
+  to be there. The partly scrolled-off top row is always drawn: the first
+  drawn row is `floor(offset / 22)`, so a mid-row offset clips that row at
+  the list edge instead of leaving an empty strip.
 - **Gauge column**: 88px gauge centered in the middle column.
 - **Value column**: current value in text; changed rows append a muted
   `(Default: N)`, no strikethrough; a blank default reads `(Default: empty)`.
   The detail meta repeats `Default: N` as the canonical home for defaults,
-  `Default: empty` when the default is blank.
+  `Default: empty` when the default is blank. Binary values never show
+  their bytes in the row: a bitfield (`closedInfoFrames`) reads
+  `Bitfield (N bytes)`, a serialized value (any control or high byte) reads
+  `Serialized (N bytes)`, and their changed default reads
+  `(Default: N bytes)`. The meta line says `Default: Bitfield (N bytes)` or
+  `Default: Serialized (N bytes)`.
 - **Scrollbar**: 8px flat slider in the right gutter, hidden when not needed.
   The 8px track column spans exactly between the top list divider and the
   detail separator — flush at both ends — and its right edge is flush with
   both separators' right ends. 4px track centered in the column; the 8px thumb
   fills the column. Thumb size from track height × clientHeight /
-  scrollHeight; position maps `scrollTop` over the track column; drag via
-  pointer capture. The thumb is a single solid muted texture at alpha 1.0 in
-  every state — fully opaque, so the track never shows through (no separate
-  translucent frame); muted, not accent, because accent marks selection and
-  focus only. The thumb rect is integer-snapped: x = column x, width = 8,
-  right edge flush with the separators' right ends. The list header's 1px
-  divider extends to the scrollbar's right edge, closing the gutter gap under
-  the thumb. The mockup's 8px right gutter is intentional.
+  scrollHeight; position maps `scrollTop` over the track column. Dragging
+  the thumb moves the list 1:1 with the cursor, on whole pixels and with no
+  easing (mockup: pointer capture); releasing it glides to the nearest
+  whole row, a multiple of 22px clamped into the range, so the top row is
+  never left half-clipped. The thumb is a single solid muted texture at
+  alpha 1.0 in every state — fully opaque, so the track never shows through
+  (no separate translucent frame); muted, not accent, because accent marks
+  selection and focus only. The thumb rect is integer-snapped: x = column
+  x, width = 8, right edge flush with the separators' right ends. The list
+  header's 1px divider extends to the scrollbar's right edge, closing the
+  gutter gap under the thumb. The mockup's 8px right gutter is intentional.
 - **Detail**: separator, name, meta, help (max 2 lines), value edit
   (340×30), Set, Reset to default, status.
+- **Meta line**: up to 8 parts, muted unless noted, split by 1px `border`
+  separators with 9px of air on each side, in this order: scope, category,
+  `Type: <type>` (see Value type),
+  `Default: <default>`, `Range help: <range>` when help sets the range,
+  `Observed: <evidence>` in `observed` teal when sets have been observed,
+  `Help range: <range>` when the range comes from observation and help says
+  something different, `Read-only` or `Locked`, and `Secure: locked in
+  combat` in `warning`. Empty parts are skipped. Range help and Help range
+  never appear together, so the fullest line is exactly 8 parts: nothing
+  caps it lower, and the Secure part is never dropped.
+- **Value type**: one inferred type drives the meta line's `Type:` part,
+  the Type filter (`type:` term), and the type sort. The first rule that
+  matches wins: Bitfield (a known bitfield CVar, `closedInfoFrames`),
+  Serialized (the value holds a control or high byte), Enum (the help text
+  holds at least two `N = label` or `N: label` pairs, labels starting with
+  a letter and at most 32 characters), Unknown (no value), Boolean (`0`,
+  `1`, `true`, `false`), Number, List (the value contains `,`, `;`, or
+  whitespace), else Text. Unknown has no filter row.
 - **Status**: one line beside the edit row, semantic tone (success, warning,
   error). Status is transient: every message — errors included — clears 30
   seconds after it appears. A new message replaces the old one and restarts
@@ -314,7 +372,7 @@ across rows. Domain is the union of help and observed bounds.
 | State | Visual |
 | --- | --- |
 | Normal row | text primary; value text; cursor text |
-| Hover | `surface_hover` fill |
+| Hover | `surface_hover` fill on the unselected row under the pointer; never on the selected row |
 | Selected | accent-tinted fill + 2px left accent bar |
 | Changed CVar | name in `changed`; value text; muted `(Default: N)`; cursor `changed` |
 | Help range | 3px muted ticks; meta `Range help` |
@@ -324,6 +382,8 @@ across rows. Domain is the union of help and observed bounds.
 | Clamped | amber status; amber edge cap; no row tint |
 | Ignored/refused | red status; no row tint |
 | Read-only | muted name; input/Set/Reset disabled; meta `Read-only`; hollow key mark |
+| Locked | input/Set/Reset disabled; meta `Locked`; name keeps its color |
+| Secure | meta `Secure: locked in combat` in warning, in and out of combat |
 | Secure in combat | Set/Reset disabled; warning status |
 | Selected changed row | accent selection bar; changed name stays changed lilac |
 | Filters active | Filters chip accent border; count in accent; tooltip lists facets |
@@ -332,6 +392,7 @@ across rows. Domain is the union of help and observed bounds.
 | Undo/redo unavailable | icon button at 38% opacity, no hover, no click |
 | Copy unavailable | Copy button disabled (no selection) |
 | Copy field missing | menu row disabled with muted `none` note |
+| Copy box open | 280×30 box under Copy, `accent` border, text highlighted; status `Press Ctrl+C to copy <field>: <cvar>` |
 | Empty result set | muted empty-state line in the list; count `0 / N CVars` |
 | Menu open | popup below its chip or box; the opener keeps its accent border while open |
 
@@ -341,17 +402,22 @@ across rows. Domain is the union of help and observed bounds.
   selects, and focuses the value field; `/cvars refresh` rescans; `/cvars
   undo` / `/cvars redo`; `/cvars ranges`; `/cvars regex`; `/cvars filters`;
   `/cvars sort name|type|scope|category|changed|range`; `/cvars minimap
-  [reset]`; `/cvars copy [value|raw|default|name|help|range] [cvar]` copies
-  via the client `CopyToClipboard` API; `/cvars clearranges` clears observed
-  bounds; `/cvars clearrange <name>` clears one.
+  [reset]`; `/cvars copy [value|raw|default|name|help|range] [cvar]` opens
+  the copy box with that field (see Copy box); `/cvars smooth [on|off]`
+  sets smooth scrolling (no argument flips it); `/cvars clearranges` clears
+  observed bounds; `/cvars clearrange <name>` clears one.
 - Search filters by name or help text and supports `scope:`, `category:`,
-  `type:`, `has:`, and `changed` filters. Enter selects the first result;
-  Up/Down moves the selection. The filter and sort chips are the visual
-  face of these command filters: selecting facets in the filter menu is
-  equivalent to typing the same `scope:`/`type:`/`has:` terms, and both
-  routes combine into one filter set. The regex chip switches the search
-  box between literal and regular-expression matching (an invalid pattern
-  simply matches nothing).
+  `type:`, `has:`, and `changed` filters. Up/Down moves the selection
+  through the results and glides the selected row to the top of the list.
+  Enter selects the row picked with Up/Down — or, with no arrow navigation
+  since the search text last changed, the first result — then focuses the
+  value field (unless the CVar is read-only, locked, or secure in combat).
+  With no results Enter leaves the search box. The filter and sort chips
+  are the visual face of these command filters: selecting facets in the
+  filter menu is equivalent to typing the same `scope:`/`type:`/`has:`
+  terms, and both routes combine into one filter set. The regex chip
+  switches the search box between literal and regular-expression matching
+  (an invalid pattern simply matches nothing).
 - Filter menu: click the Filters chip to open; the menu stays open while
   facets toggle so several can be set in one pass. Scope/category/type are
   single-select (picking one replaces the previous); Has facets are
@@ -360,7 +426,10 @@ across rows. Domain is the union of help and observed bounds.
   Escape or an outside click closes any open menu.
 - Sort menu: click a sort key to sort by it; clicking the active key flips
   asc/desc. Selecting `changed` starts desc (changed rows first); the other
-  keys start asc. The chip always shows the live `key dir`.
+  keys start asc. Keys compare lowercase (type sorts by the value type's
+  name); the direction flips only the key, and ties always fall back to
+  name ascending. Rows with no range width sort last in both directions.
+  The chip always shows the live `key dir`.
 - Size menu: click the Size box in the title bar and pick Auto, Compact,
   Standard, or Large to apply that preset — window geometry and the integer
   font sizes change with it, and the choice is saved. Auto resolves by
@@ -370,17 +439,45 @@ across rows. Domain is the union of help and observed bounds.
   row); redo re-applies it. Disabled buttons cannot fire. Shortcuts:
   Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z — not intercepted while an edit box has
   focus, so native text undo keeps working.
-- Copy: the menu copies the selected CVar's display value, raw value,
-  default, name, help, or range text to the clipboard and confirms in the
-  status line. Disabled with no selection.
+- Copy: a menu row closes the menus and opens the copy box holding the
+  selected CVar's value, raw value, default, name, help, or range text; the
+  status line asks for Ctrl+C. Disabled with no selection.
 - Minimap: command-only, no window controls. `/cvars minimap` toggles the
   minimap icon; `/cvars minimap reset` snaps the icon back to its default
   position. The hidden state persists for the session.
-- Serialized/binary values show `Serialized (N bytes)` and edit as hex.
+- Bitfield and serialized values edit as hex in the value field: two
+  uppercase digits per byte, so status lines show hex too. Set ignores
+  whitespace; an odd-length or non-hex entry fails with `Bitfield/serialized
+  value must be an even-length hex string.`
 - Click a row to select. Edit the value; Enter or Set applies.
 - Escape closes when no edit box has focus.
-- Wheel and scrollbar scroll the list; the scrollbar thumb must track the
-  viewport exactly, including after font, size, or filter changes.
+- Wheel and scrollbar scroll the list (see Scrolling); the scrollbar thumb
+  must track the viewport exactly, including after font, size, or filter
+  changes.
+
+## Scrolling
+
+Smooth scrolling is on by default; `/cvars smooth [on|off]` sets it. Every
+offset, list and filter popup, smooth or not, is a whole pixel.
+
+- **Easing**: a smooth scroll sets a target and glides to it. Each frame
+  moves `round(diff × min(1, elapsed × 16))` px toward the target, at least
+  1px, and the last step lands exactly on the target. With smooth off, the
+  same requests jump straight to the target.
+- **List wheel**: 3 rows (66px) per notch. Each notch adds onto the pending
+  target rather than the current offset, so a fast spin accumulates.
+- **Thumb drag**: the list follows the thumb 1:1 while held, with no
+  easing. On release it glides to the nearest whole row (a multiple of
+  22px, clamped into the range).
+- **Up/Down in search**: glides so the newly selected row sits at the top
+  of the list, clamped at the bottom of the range.
+- **Search, filter, Changed only, regex, or sort change**: the list jumps
+  instantly to the top and any pending glide is dropped. Setting or
+  resetting a value keeps the offset.
+- **Filter popup wheel**: glides 40px per notch, accumulating the same way.
+- **Range change** (a size preset resizing the list): a list scrolled to the
+  bottom stays pinned to the bottom; otherwise the offset and any pending
+  target are only clamped into the new range.
 
 ## Mockup controls
 
@@ -390,7 +487,11 @@ blocks local font loading from file URLs). Controls:
 - Four palettes: Void amethyst, Grim plum (default), Nebula, Dark orchid.
 - UI font: Inter, IBM Plex Sans, Manrope, Space Grotesk, Noto Sans (default).
 - Data font: Same as UI (default) or JetBrains Mono.
-- Text size: 13 (default) / 14 / 15 / 16.
+- Text size: 13 (default) / 14 / 15 / 16. Its row-height change also
+  exercises the Scrolling range-change rule; wheel steps and the drag
+  settle use the current row height.
+- Smooth scroll toggle (default on): the `/cvars smooth` setting. Wheel
+  deltas count as one notch per 100px (or 3 lines).
 - Size menu in the title bar: Auto (default) / Compact / Standard / Large,
   with the selected preset marked in accent behind the accent left bar. The
   mockup stays at the 920×680 Standard reference — it does not re-render the
@@ -417,6 +518,8 @@ without touching `CVarBrowser.lua`.
 - Use `CreateFrame(..., "BackdropTemplate")` for bordered surfaces.
 - Use `CreateFont` + `SetFontObject`; fall back to `STANDARD_TEXT_FONT` if a
   bundled TTF cannot be loaded.
-- Row recycling (visible rows only) keeps large CVar lists cheap.
+- Row recycling (visible rows only) keeps large CVar lists cheap: 20 pooled
+  rows cover the tallest list plus a partly visible row at each edge, and
+  the first drawn row is `floor(offset / ROW_HEIGHT) + 1`.
 - All colors and sizes live in `COLORS`, `BODY_FONT_SIZE`, `ROW_HEIGHT`, etc.
 - No binary reverse engineering; only documented client Lua APIs.

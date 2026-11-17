@@ -241,7 +241,6 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   overflow: hidden;
   background: var(--bg);
   border: 1px solid var(--border);
-  box-shadow: 0 28px 80px rgba(0, 0, 0, .6);
   color: var(--text);
   font-family: var(--font-ui);
   font-size: var(--body-size);
@@ -428,7 +427,6 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   padding: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, .45);
   /* Never taller than the window allows: the control row's popups open at
      y=130 inside the 678px content box, so 536px leaves 12px of air above
      the window's bottom edge. Overflow scrolls internally — an 8px muted
@@ -505,6 +503,34 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   background: var(--accent);
 }
 
+/* Copy box. CopyToClipboard is protected for addons, so a copy opens this
+   280x30 box in the copy menu's slot (TOPLEFT on the Copy button's
+   BOTTOMLEFT, 4px down) holding the text focused and fully highlighted for
+   Ctrl+C. The edit box sits 10px in from each side with 2px text insets.
+   The box only exists while its text has focus, so it wears the focus
+   accent border of the search box and value field; the highlight is the
+   accent selection tint. No shadow, matching the runtime frame. */
+.copy-box {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  width: 280px;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+}
+.copy-box[hidden] { display: none; }
+.copy-box input {
+  width: 100%; min-width: 0; height: 100%; padding: 0 2px;
+  border: 0; outline: 0; background: transparent;
+  color: var(--text); font-family: var(--font-data); font-size: var(--body-size);
+}
+.copy-box input::selection { background: rgba(var(--accent-rgb), .35); color: var(--text); }
+
 /* right: 24px + 30px right padding keeps the label columns aligned with the
    rows while the border-bottom divider runs on to x=896 — flush with the
    scrollbar column's right edge and the detail separator's right end. */
@@ -560,7 +586,9 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   color: var(--text);
   font-size: var(--body-size);
 }
-.row:hover { background: var(--surface-hover); }
+/* Hover fill only on an unselected row under the pointer: selecting the
+   hovered row clears it, and after a scroll it follows the pointer. */
+.row:not(.selected):hover { background: var(--surface-hover); }
 .row.selected { background: rgba(var(--accent-rgb), .14); border-left-color: var(--accent); }
 .row .name, .row .value { font-family: var(--font-data); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row .value { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
@@ -660,6 +688,7 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 .detail-meta span { padding: 0 9px; border-left: 1px solid var(--border); }
 .detail-meta span:first-child { padding-left: 0; border-left: 0; }
 .detail-meta span.meta-observed { color: var(--observed); }
+.detail-meta span.meta-warning { color: var(--warning); }
 .detail-help {
   margin: 6px 0 0;
   color: var(--text);
