@@ -74,6 +74,11 @@
   `TODO:` marker and colons that belong to code, such as `frame:Show()`.
 - README.md follows the same humanizer rules. AGENTS.md and DESIGN.md are
   agent-owned and are not humanized.
+- Commit messages follow the humanizer rules too: a plain, concise subject
+  and body with no semicolons, colons, or em/en dashes in the prose (code,
+  paths, and identifiers in backticks are fine). Never rewrite published
+  history to change a message, because release tags and shipped X-Build
+  hashes point at those commits.
 - Text files use LF line endings (`.gitattributes`); fonts are binary.
 
 ## CI and releases
