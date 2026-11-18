@@ -92,6 +92,9 @@
       <button type="button" data-scenario="sort">Active sort</button>
       <button type="button" data-scenario="undo">Undo &amp; redo disabled</button>
       <button type="button" data-scenario="copy">Copy disabled</button>
+      <button type="button" data-scenario="favorites">Favorites only</button>
+      <button type="button" data-scenario="value">Value filter</button>
+      <button type="button" data-scenario="tooltip">Row tooltip</button>
       <button type="button" data-scenario="default">Default</button>
     </div>
 
@@ -182,6 +185,8 @@
 
       <div class="detail-separator"></div>
 
+      <div class="row-tooltip" id="row-tooltip" role="tooltip" hidden></div>
+
       <section class="detail" id="detail">
         <div class="detail-head">
           <h3 id="detail-name"></h3>
@@ -197,6 +202,7 @@
       </section>
 
       <footer class="semantic-key">
+        <span class="key-item"><svg class="key-mark key-favorite" viewBox="0 0 7 7" width="7" height="7" aria-hidden="true"><rect x="3" y="0" width="1" height="1"></rect><rect x="2" y="1" width="3" height="1"></rect><rect x="1" y="2" width="5" height="1"></rect><rect x="0" y="3" width="7" height="1"></rect><rect x="1" y="4" width="5" height="1"></rect><rect x="2" y="5" width="3" height="1"></rect><rect x="3" y="6" width="1" height="1"></rect></svg>Favorite</span>
         <span class="key-item key-changed-label">Differs from default</span>
         <span class="key-item"><i class="key-mark key-observed-ticks"></i>Observed bounds</span>
         <span class="key-item"><i class="key-mark key-readonly"></i>Read-only</span>

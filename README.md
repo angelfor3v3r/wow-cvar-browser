@@ -14,6 +14,9 @@ Search, inspect, edit, and reset every console variable the WoW Forever client e
 - See each CVar's current value, default, account or character scope, and category.
 - Edit values, see when the client clamps or normalizes them, and reset to default.
 - Undo and redo successful changes.
+- A saved change log of every set, reset, undo, and redo made in the browser.
+- Pin favorite CVars so they stay at the top of the list.
+- Hover a row to see its full name, value, and help text.
 - Markers for read-only, secure, changed, and observed-bound CVars.
 - Learned clamp bounds that you can list and clear.
 - An 88×8 range gauge on every row.
@@ -31,6 +34,9 @@ Search, inspect, edit, and reset every console variable the WoW Forever client e
 | `/cvars undo` | Undo the last successful set |
 | `/cvars redo` | Redo the last undo |
 | `/cvars ranges [name]` | List learned clamp bounds, for all CVars or one |
+| `/cvars fav [name]` | Pin or unpin a CVar, or the selected one |
+| `/cvars log [count\|name]` | List logged changes, the last 10 by default, or every change to one CVar |
+| `/cvars clearlog` | Clear the change log |
 | `/cvars sort name\|type\|scope\|category\|changed\|range [asc\|desc]` | Sort the rows |
 | `/cvars copy [value\|raw\|default\|name\|help\|range] [cvar]` | Show the text selected in a copy box so you can press Ctrl+C (addons can't write to the clipboard) |
 | `/cvars minimap` | Hide or show the minimap button |
@@ -54,9 +60,19 @@ You can type filters into the search box and combine them:
 scope:account category:graphics type:number has:range changed
 ```
 
-The supported filters are `scope:account|character|local`, `category:<name>`, `type:number|text|boolean|enum|list|bitfield|serialized`, `has:range|observed|help|default|changed`, and the bare word `changed`. With `/cb regex` on, the rest of the text is a Lua pattern. Up and Down in the search box move the selection, and Enter selects that row (or the first match) and focuses the value field.
+The supported filters are `scope:account|character|local`, `category:<name>`, `type:number|text|boolean|enum|list|bitfield|serialized`, `has:range|observed|help|default|changed|fav`, `value:<text>` (the current value contains the text), `value:=<text>` (the value is exactly the text), and the bare word `changed`. Values compare as the value field shows them, so bitfields match as hex. With `/cb regex` on, the rest of the text is a Lua pattern.
 
 Bitfield and serialized values show as `Bitfield (N bytes)` or `Serialized (N bytes)`, and you edit them as hex.
+
+## Keyboard
+
+In the search box, Up and Down move the selection by one row and PageUp and PageDown move it by a page. Enter selects that row (or the first match) and focuses the value field. Escape clears the search text first, and a second Escape leaves the box.
+
+When no text box has focus and the cursor is over the window, Up, Down, PageUp, PageDown, Home, and End move the selection. Escape closes an open menu, then clears the search, then closes the window. Every other key reaches the game as usual, and in combat the window lets every key through.
+
+## Change log
+
+The change log keeps the newest 200 changes across sessions. It records changes made in the browser, not ones made by the game's options menus or other addons.
 
 ## Where ranges come from
 

@@ -344,6 +344,16 @@ const CVARS = [
     readonly: true,
   },
   {
+    name: "realmList",
+    help: "Address of the login server the client connects to. A change applies at the next login, and an address the client cannot reach leaves the realm list empty.",
+    range: "",
+    source: "",
+    value: "logon.forever.example.net;logon2.forever.example.net;logon-backup.forever.example.net",
+    def: "logon.forever.example.net",
+    scope: "Local",
+    category: "Net",
+  },
+  {
     name: "weirdCvar",
     help: "A CVar that accepts a set but silently ignores it.",
     range: "",
@@ -378,12 +388,16 @@ const CVARS = [
 
 const SORT_KEYS = ["name", "type", "scope", "category", "changed", "range"];
 
+// Favorites the mockup starts with. The runtime keeps them in g_db.favorites.
+const DEFAULT_FAVORITES = ["farclip", "nameplateMaxDistance"];
+
 const state = {
   query: "",
   regex: false,
   changedOnly: false,
   filters: { scope: "all", category: "all", type: "all", has: [] },
   sort: { key: "name", dir: "asc" },
+  favorites: new Set(DEFAULT_FAVORITES),
   selected: "assaoFadeOutTo",
   palette: DEFAULTS.palette,
   font: DEFAULTS.font,
@@ -544,9 +558,52 @@ function hasFacet(cvar, facet) {
       return !(cvar.def === "" || /^\s*$/.test(cvar.def));
     case "changed":
       return isChanged(cvar);
+    case "favorite":
+      return state.favorites.has(cvar.name);
     default:
       return false;
   }
+}
+
+function isFavorite(cvar) {
+  return state.favorites.has(cvar.name);
+}
+
+/* Splits the search text like the runtime's rebuild_view. Lowercased
+   `key:value` tokens become filters (scope, category or cat, type, has,
+   value), a bare `changed` turns on Changed only, and every other token is
+   a text term. A later token of the same key replaces an earlier one. */
+function parseQuery(text) {
+  const parsed = { terms: [], scope: null, category: null, type: null, has: null, value: null, changed: false };
+  for (const raw of text.trim().split(/\s+/).filter(Boolean)) {
+    const token = raw.toLowerCase();
+    const match = /^(\w+):(.+)$/.exec(token);
+    const key = match ? match[1] : "";
+    if (key === "scope") {
+      parsed.scope = match[2];
+    } else if (key === "category" || key === "cat") {
+      parsed.category = match[2];
+    } else if (key === "type") {
+      parsed.type = match[2];
+    } else if (key === "has") {
+      parsed.has = match[2];
+    } else if (key === "value") {
+      parsed.value = match[2];
+    } else if (token === "changed") {
+      parsed.changed = true;
+    } else {
+      parsed.terms.push(state.regex ? raw : token);
+    }
+  }
+  return parsed;
+}
+
+// Typed `has:` terms. `fav` is short for `favorite`, and an unknown facet
+// filters nothing out (runtime has_state).
+const HAS_FACETS = new Set(["range", "observed", "help", "default", "changed", "favorite"]);
+function typedHas(cvar, facet) {
+  const key = facet === "fav" ? "favorite" : facet;
+  return HAS_FACETS.has(key) ? hasFacet(cvar, key) : true;
 }
 
 function activeFilterCount() {
@@ -569,9 +626,9 @@ function filterSummary() {
   return parts.join(", ");
 }
 
-function matchesFilters(cvar) {
+function matchesFilters(cvar, parsed) {
   const f = state.filters;
-  if (state.changedOnly && !isChanged(cvar)) {
+  if ((state.changedOnly || parsed.changed) && !isChanged(cvar)) {
     return false;
   }
   if (f.scope !== "all" && cvar.scope.toLowerCase() !== f.scope) {
@@ -583,35 +640,58 @@ function matchesFilters(cvar) {
   if (f.type !== "all" && valueType(cvar).toLowerCase() !== f.type) {
     return false;
   }
-  return f.has.every((facet) => hasFacet(cvar, facet));
+  if (!f.has.every((facet) => hasFacet(cvar, facet))) {
+    return false;
+  }
+  if (parsed.scope && !cvar.scope.toLowerCase().includes(parsed.scope)) {
+    return false;
+  }
+  if (parsed.category && !cvar.category.toLowerCase().includes(parsed.category)) {
+    return false;
+  }
+  if (parsed.type && valueType(cvar).toLowerCase() !== parsed.type) {
+    return false;
+  }
+  if (parsed.has && !typedHas(cvar, parsed.has)) {
+    return false;
+  }
+  if (parsed.value != null) {
+    // `value:x` finds x in the current value and `value:=x` needs the whole
+    // value, both ignoring case. Binary values compare as the hex the value
+    // field shows.
+    const shown = editText(cvar, cvar.value).toLowerCase();
+    return parsed.value.startsWith("=") ? shown === parsed.value.slice(1) : shown.includes(parsed.value);
+  }
+  return true;
 }
 
-function matchesQuery(cvar) {
-  const query = state.query.trim();
-  if (!query) {
+function matchesQuery(cvar, parsed) {
+  if (parsed.terms.length === 0) {
     return true;
   }
   if (state.regex) {
     let re;
     try {
-      re = new RegExp(query, "i");
+      re = new RegExp(parsed.terms.join(" "), "i");
     } catch {
       return false;
     }
     return re.test(cvar.name) || re.test(cvar.help ?? "");
   }
-  const q = query.toLowerCase();
-  return (
-    cvar.name.toLowerCase().includes(q) ||
-    (cvar.help ?? "").toLowerCase().includes(q)
-  );
+  const name = cvar.name.toLowerCase();
+  const help = (cvar.help ?? "").toLowerCase();
+  return parsed.terms.every((term) => name.includes(term) || help.includes(term));
 }
 
-/* Sorts like the runtime's rebuild_view. Lowercase keys compare bytewise.
-   The direction flips only the key, and ties always fall back to name
-   ascending. Changed asc puts unchanged rows first. Rows with no range
-   width sort last in both directions. */
+/* Sorts like the runtime's rebuild_view. Favorites always sort above every
+   other row, in both directions, and the sort key orders rows inside each
+   group. Lowercase keys compare bytewise. The direction flips only the key,
+   and ties always fall back to name ascending. Changed asc puts unchanged
+   rows first. Rows with no range width sort last in both directions. */
 function compareCvars(a, b) {
+  if (isFavorite(a) !== isFavorite(b)) {
+    return isFavorite(a) ? -1 : 1;
+  }
   const dir = state.sort.dir === "desc" ? -1 : 1;
   const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
   const byName = cmp(a.name.toLowerCase(), b.name.toLowerCase());
@@ -651,7 +731,8 @@ function compareCvars(a, b) {
 }
 
 function filteredCvars() {
-  return CVARS.filter((cvar) => matchesFilters(cvar) && matchesQuery(cvar)).sort(compareCvars);
+  const parsed = parseQuery(state.query);
+  return CVARS.filter((cvar) => matchesFilters(cvar, parsed) && matchesQuery(cvar, parsed)).sort(compareCvars);
 }
 
 /* Every status message, errors included, clears 30s after it appears. A new
@@ -760,6 +841,28 @@ function gaugeFor(cvar) {
   return `<svg class="gauge" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">${ticks.join("")}</svg>`;
 }
 
+/* The favorite mark is a 7x7 pixel diamond drawn from 1px rects, like the
+   runtime's textures (no bundled font has a star). The 12 outline pixels
+   always draw together. The 5 interior rows fill it in when the CVar is a
+   favorite. Offsets are [x, y, width] from the mark's top-left corner. */
+const FAV_OUTLINE = [[3, 0, 1], [2, 1, 1], [4, 1, 1], [1, 2, 1], [5, 2, 1], [0, 3, 1], [6, 3, 1], [1, 4, 1], [5, 4, 1], [2, 5, 1], [4, 5, 1], [3, 6, 1]];
+const FAV_INTERIOR = [[3, 1, 1], [2, 2, 3], [1, 3, 5], [2, 4, 3], [3, 5, 1]];
+const favRects = (parts) => parts.map(([x, y, w]) => `<rect x="${x}" y="${y}" width="${w}" height="1"></rect>`).join("");
+const FAV_MARK = `<svg class="fav-mark" viewBox="0 0 7 7" width="7" height="7" aria-hidden="true">${favRects(FAV_OUTLINE)}<g class="fav-fill">${favRects(FAV_INTERIOR)}</g></svg>`;
+
+// Row value text. Binary values show their size, never their bytes (runtime
+// render_row).
+function valueDisplay(cvar) {
+  const kind = binaryKind(cvar);
+  return kind ? `${kind} (${cvar.value.length} bytes)` : cvar.value;
+}
+
+// Default text in the detail meta wording, shared by the row tooltip.
+function defaultDisplay(cvar) {
+  const kind = binaryKind(cvar);
+  return kind ? `${kind} (${cvar.def.length} bytes)` : /^\s*$/.test(cvar.def) ? "empty" : cvar.def;
+}
+
 function renderRows() {
   const list = filteredCvars();
   if (list.length === 0) {
@@ -780,17 +883,17 @@ function renderRows() {
       const changed = isChanged(cvar);
       const readonly = cvar.readonly ? "readonly" : "";
       const kind = binaryKind(cvar);
-      // Binary values show their size, never their bytes (runtime render_row).
       const defDisplay = kind ? `${cvar.def.length} bytes` : /^\s*$/.test(cvar.def) ? "empty" : cvar.def;
-      const valueDisplay = kind ? `${kind} (${cvar.value.length} bytes)` : cvar.value;
       const defaultValue = changed
         ? `<span class="default-value">(Default: ${escapeHtml(defDisplay)})</span>`
         : "";
+      const fav = isFavorite(cvar);
       return `
         <div class="row ${selected ? "selected" : ""} ${readonly}" data-name="${escapeHtml(cvar.name)}" role="button" tabindex="0">
+          <button type="button" class="fav-toggle" tabindex="-1" aria-pressed="${fav}" aria-label="${fav ? "Remove from favorites" : "Add to favorites"}">${FAV_MARK}</button>
           <span class="name ${changed ? "changed" : ""}">${escapeHtml(cvar.name)}</span>
           <span class="gauge-cell">${gaugeFor(cvar)}</span>
-          <span class="value">${escapeHtml(valueDisplay)}${defaultValue}</span>
+          <span class="value">${escapeHtml(valueDisplay(cvar))}${defaultValue}</span>
         </div>`;
     })
     .join("");
@@ -823,10 +926,6 @@ function renderDetail() {
     detailNameEl.classList.add("readonly");
   }
 
-  const kind = binaryKind(cvar);
-  const defDisplay = kind
-    ? `${kind} (${cvar.def.length} bytes)`
-    : /^\s*$/.test(cvar.def) ? "empty" : cvar.def;
   // Up to 8 parts in the runtime's order (META_MAX_PARTS = 8). Range help
   // and Help range never appear together, so the fullest line is 8 parts
   // and the Secure part is never dropped.
@@ -834,7 +933,7 @@ function renderDetail() {
     { text: cvar.scope },
     { text: cvar.category },
     { text: `Type: ${valueType(cvar)}` },
-    { text: `Default: ${defDisplay}` },
+    { text: `Default: ${defaultDisplay(cvar)}` },
   ];
   if (cvar.range && cvar.source === "help") {
     meta.push({ text: `Range help: ${cvar.range}` });
@@ -978,9 +1077,11 @@ function wheelNotches(event) {
 }
 
 /* Search, filter, regex, and sort changes rebuild the view at the top,
-   instantly, dropping any pending glide. */
+   instantly, dropping any pending glide. A rebuild also hides the row
+   tooltip, cold. */
 function jumpListToTop() {
   scrollFrameTo(viewport, 0, false);
+  hideTooltip(false);
 }
 
 function applyValue() {
@@ -1189,7 +1290,7 @@ function filterMenuHtml() {
     </div>
     <div class="menu-group">
       <span class="menu-group-label">Has</span>
-      ${rows("has", [["range", "Range"], ["observed", "Observed bounds"], ["help", "Help range"], ["default", "Default"], ["changed", "Differs from default"]], f.has)}
+      ${rows("has", [["range", "Range"], ["observed", "Observed bounds"], ["help", "Help range"], ["default", "Default"], ["changed", "Differs from default"], ["favorite", "Favorite"]], f.has)}
     </div>`;
 }
 
@@ -1254,6 +1355,7 @@ function showCopyBox(text) {
   copyBoxInputEl.value = text;
   copyBoxInputEl.focus();
   highlightCopyBox();
+  hideTooltip(false);
 }
 
 function copyField(key) {
@@ -1302,6 +1404,7 @@ function toggleMenu(button, menu, html) {
     return;
   }
   menu.innerHTML = html();
+  hideTooltip(false);
   menu.hidden = false;
   button.setAttribute("aria-expanded", "true");
   openMenu = menu;
@@ -1319,6 +1422,7 @@ function clearFilters() {
 
 function applyScenario(name) {
   closeMenus();
+  hideTooltip(false);
   state.query = "";
   searchEl.value = "";
   searchNavigated = false;
@@ -1327,6 +1431,7 @@ function applyScenario(name) {
   changedOnlyEl.checked = false;
   state.filters = { scope: "all", category: "all", type: "all", has: [] };
   state.sort = { key: "name", dir: "asc" };
+  state.favorites = new Set(DEFAULT_FAVORITES);
   history.undo.length = 0;
   history.redo.length = 0;
 
@@ -1348,6 +1453,20 @@ function applyScenario(name) {
       searchEl.value = state.query;
       note = "No selection: copy disabled";
       break;
+    case "favorites":
+      state.filters = { scope: "all", category: "all", type: "all", has: ["favorite"] };
+      note = "Active filters: has:favorite";
+      break;
+    case "value":
+      state.query = "value:=1";
+      searchEl.value = state.query;
+      note = "Search value:=1 keeps values that are exactly 1";
+      break;
+    case "tooltip":
+      state.query = "realm";
+      searchEl.value = state.query;
+      note = "Row tooltip for realmList, held open until the pointer reaches the list";
+      break;
     default:
       break;
   }
@@ -1356,6 +1475,10 @@ function applyScenario(name) {
   // Posted after the render because renderDetail clears the status line, and
   // the scenario note must live its full 30s like every other status.
   setStatus(note, "");
+  if (name === "tooltip") {
+    // After this frame's scroll events, so the jump to the top cannot hide it.
+    requestAnimationFrame(() => showTooltip({ name: "realmList", toggle: false }));
+  }
 }
 
 function applyPalette(key) {
@@ -1541,14 +1664,197 @@ function resetOptions() {
   saveState();
 }
 
+/* ---- Row tooltip ----
+   Mirrors the runtime row tooltip (DESIGN.md, Row tooltip). It shows after
+   the pointer rests 500ms on a row. While it is up, or within 100ms of it
+   hiding, the next row swaps in at once. Its text column lines up with the
+   row's name column (panel x = row x + 14, text 8px in), 4px below the row,
+   or 4px above it when below would come within 8px of the window's bottom.
+   Over the favorite toggle it holds one action line instead. */
+const TOOLTIP_DELAY_MS = 500;
+const TOOLTIP_WARM_MS = 100;
+const tooltipEl = document.getElementById("row-tooltip");
+let tipTimer = 0;
+let tipKey = "";
+let tipHiddenAt = -Infinity;
+let tipPointer = null;
+let pointerOverApp = false;
+
+function tooltipTarget(el) {
+  const row = el instanceof Element ? el.closest(".row") : null;
+  if (!row || !rowsEl.contains(row)) {
+    return null;
+  }
+  return { name: row.dataset.name, toggle: Boolean(el.closest(".fav-toggle")) };
+}
+
+function tooltipKeyOf(target) {
+  return target ? `${target.name}${target.toggle ? "|toggle" : ""}` : "";
+}
+
+function tooltipHtml(cvar, toggle) {
+  if (toggle) {
+    return `<div class="tip-line tip-action">${isFavorite(cvar) ? "Remove from favorites" : "Add to favorites"}</div>`;
+  }
+  // The name takes the row's name color: muted when read-only, changed lilac
+  // when it differs from default, text otherwise.
+  const tone = cvar.readonly ? " readonly" : isChanged(cvar) ? " changed" : "";
+  const value = valueDisplay(cvar);
+  const lines = [
+    `<div class="tip-line tip-name${tone}">${escapeHtml(cvar.name)}</div>`,
+    `<div class="tip-line tip-value">Value: ${escapeHtml(/^\s*$/.test(value) ? "empty" : value)}</div>`,
+  ];
+  if (isChanged(cvar)) {
+    lines.push(`<div class="tip-line tip-default">Default: ${escapeHtml(defaultDisplay(cvar))}</div>`);
+  }
+  if (cvar.help && cvar.help.trim()) {
+    lines.push(`<div class="tip-line tip-help">${escapeHtml(cvar.help.trim())}</div>`);
+  }
+  return lines.join("");
+}
+
+function showTooltip(target) {
+  const cvar = CVARS.find((c) => c.name === target.name);
+  const row = [...rowsEl.querySelectorAll(".row")].find((el) => el.dataset.name === target.name);
+  if (!cvar || !row) {
+    return;
+  }
+  tooltipEl.innerHTML = tooltipHtml(cvar, target.toggle);
+  tooltipEl.hidden = false;
+  const appRect = app.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const rowTop = Math.round(rowRect.top - appRect.top - app.clientTop);
+  const height = tooltipEl.offsetHeight;
+  let top = rowTop + rowRect.height + 4;
+  if (top + height > app.clientHeight - 8 && rowTop - 4 - height >= 8) {
+    top = rowTop - 4 - height;
+  }
+  tooltipEl.style.left = `${Math.round(rowRect.left - appRect.left - app.clientLeft) + 14}px`;
+  tooltipEl.style.top = `${top}px`;
+}
+
+// A warm hide (the pointer left the row) lets the next row show at once. A
+// cold hide (click, scroll, menu) makes the next show wait the full delay.
+function hideTooltip(warm) {
+  clearTimeout(tipTimer);
+  tipTimer = 0;
+  if (warm && !tooltipEl.hidden) {
+    tipHiddenAt = performance.now();
+  } else if (!warm) {
+    tipHiddenAt = -Infinity;
+  }
+  tooltipEl.hidden = true;
+}
+
+function armTooltip(target) {
+  clearTimeout(tipTimer);
+  tipTimer = 0;
+  if (openMenu || !copyBoxEl.hidden || scrollDrag) {
+    return;
+  }
+  if (!tooltipEl.hidden || performance.now() - tipHiddenAt <= TOOLTIP_WARM_MS) {
+    showTooltip(target);
+    return;
+  }
+  tipTimer = setTimeout(() => {
+    tipTimer = 0;
+    showTooltip(target);
+  }, TOOLTIP_DELAY_MS);
+}
+
+rowsEl.addEventListener("pointermove", (event) => {
+  tipPointer = { x: event.clientX, y: event.clientY };
+  const target = tooltipTarget(event.target);
+  const key = tooltipKeyOf(target);
+  if (key === tipKey) {
+    return;
+  }
+  tipKey = key;
+  if (target) {
+    armTooltip(target);
+  } else {
+    hideTooltip(true);
+  }
+});
+
+rowsEl.addEventListener("pointerleave", () => {
+  tipPointer = null;
+  tipKey = "";
+  hideTooltip(true);
+});
+
+app.addEventListener("pointerenter", () => {
+  pointerOverApp = true;
+});
+app.addEventListener("pointerleave", () => {
+  pointerOverApp = false;
+});
+
+/* Clicking the toggle flips the favorite without selecting the row. The
+   runtime rebuilds with keep_scroll, so the list keeps its offset while the
+   row moves into or out of the favorites group. */
+function toggleFavorite(name) {
+  const added = !state.favorites.has(name);
+  if (added) {
+    state.favorites.add(name);
+  } else {
+    state.favorites.delete(name);
+  }
+  render();
+  setStatus(added ? `Added ${name} to favorites` : `Removed ${name} from favorites`, "success");
+}
+
 rowsEl.addEventListener("click", (event) => {
   const row = event.target.closest(".row");
   if (!row) {
     return;
   }
+  // A click hides the tooltip until the pointer reaches another row.
+  hideTooltip(false);
+  if (event.target.closest(".fav-toggle")) {
+    toggleFavorite(row.dataset.name);
+    return;
+  }
   state.selected = row.dataset.name;
   render();
 });
+
+/* Navigation keys, as the runtime's move_selection. Up/Down step one row,
+   PageUp/PageDown step one page (the rows the list shows whole, 15 at
+   Standard), Home/End jump to the ends. The selected row glides to the top
+   of the list, clamped at the bottom of the range. */
+function moveSelection(key) {
+  const list = filteredCvars();
+  const page = Math.max(1, Math.floor(viewport.clientHeight / rowHeight()));
+  const steps = {
+    ArrowUp: -1,
+    ArrowDown: 1,
+    PageUp: -page,
+    PageDown: page,
+    Home: -list.length,
+    End: list.length,
+  };
+  if (!(key in steps)) {
+    return false;
+  }
+  if (list.length === 0) {
+    return true;
+  }
+  const current = Math.max(0, list.findIndex((cvar) => cvar.name === state.selected));
+  const index = Math.min(Math.max(current + steps[key], 0), list.length - 1);
+  state.selected = list[index].name;
+  render();
+  scrollFrameTo(viewport, index * rowHeight(), true);
+  return true;
+}
+
+function clearSearch() {
+  searchEl.value = "";
+  state.query = "";
+  searchNavigated = false;
+  jumpListToTop();
+  render();
+}
 
 rowsEl.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") {
@@ -1582,24 +1888,21 @@ searchEl.addEventListener("blur", () => {
   searchEl.placeholder = SEARCH_PLACEHOLDER;
 });
 
+// The first Escape clears the search text and a second one leaves the box.
+// Home and End stay with the box, where they move the caret.
 searchEl.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    searchEl.blur();
+    event.stopPropagation();
+    if (searchEl.value !== "") {
+      clearSearch();
+    } else {
+      searchEl.blur();
+    }
     return;
   }
-  if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+  if (event.key !== "Home" && event.key !== "End" && moveSelection(event.key)) {
     event.preventDefault();
-    const list = filteredCvars();
-    if (list.length === 0) {
-      return;
-    }
-    let index = Math.max(0, list.findIndex((cvar) => cvar.name === state.selected));
-    index = event.key === "ArrowDown" ? Math.min(index + 1, list.length - 1) : Math.max(index - 1, 0);
     searchNavigated = true;
-    state.selected = list[index].name;
-    render();
-    // Glide so the selected row sits at the top of the list.
-    scrollFrameTo(viewport, index * rowHeight(), true);
     return;
   }
   if (event.key !== "Enter") {
@@ -1639,7 +1942,19 @@ valueEditEl.addEventListener("keydown", (event) => {
   }
 });
 
-viewport.addEventListener("scroll", updateScrollbar, { passive: true });
+// Scrolling hides the tooltip. Each scroll step restarts the full delay for
+// the row now under the pointer, so it returns once the list comes to rest.
+viewport.addEventListener("scroll", () => {
+  updateScrollbar();
+  hideTooltip(false);
+  const target = tipPointer && !scrollDrag
+    ? tooltipTarget(document.elementFromPoint(tipPointer.x, tipPointer.y))
+    : null;
+  tipKey = tooltipKeyOf(target);
+  if (target) {
+    armTooltip(target);
+  }
+}, { passive: true });
 
 let scrollDrag = null;
 scrollbarThumb.addEventListener("pointerdown", (event) => {
@@ -1871,14 +2186,35 @@ document.addEventListener("pointerdown", (event) => {
   closeMenus();
 });
 
+/* With no edit box focused, Escape closes an open menu, then clears the
+   search text, then closes the window. Navigation keys move the selection
+   while the pointer is over the window. */
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && openMenu) {
+    const button = openMenuButton;
     closeMenus();
-    openMenuButton?.focus();
+    button?.focus();
     return;
   }
   const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
-  if (typing || !event.ctrlKey || event.altKey) {
+  if (typing) {
+    return;
+  }
+  if (event.key === "Escape") {
+    if (searchEl.value !== "") {
+      clearSearch();
+    } else {
+      setStatus("Escape closes the window, mockup only", "warning");
+    }
+    return;
+  }
+  if (!event.ctrlKey && !event.altKey && !event.metaKey) {
+    if (pointerOverApp && moveSelection(event.key)) {
+      event.preventDefault();
+    }
+    return;
+  }
+  if (!event.ctrlKey || event.altKey) {
     return;
   }
   const key = event.key.toLowerCase();

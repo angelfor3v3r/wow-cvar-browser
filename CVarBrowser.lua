@@ -18,6 +18,7 @@ local pcall = pcall
 local floor, min, max, abs = math.floor, math.min, math.max, math.abs
 local format = string.format
 local sort, concat = table.sort, table.concat
+local time, date = time, date
 
 -- Physical pixels per frame unit after scale compensation (~1.0).
 -- Anchor offsets on the frame use the same frame units. Cursor screen
@@ -92,6 +93,8 @@ local DB_DEFAULTS = {
     minimap_hidden = false,
     smooth_scroll = true,
 }
+-- The change log keeps this many entries in saved variables, oldest first.
+local LOG_LIMIT = 200
 local LAYOUT_PRESETS = {
     compact = {
         width = 800,
@@ -877,6 +880,13 @@ local function init_db()
     if type(g_db.observed) ~= "table" then
         g_db.observed = {}
     end
+    -- Favorites are keyed by the CVar's canonical name.
+    if type(g_db.favorites) ~= "table" then
+        g_db.favorites = {}
+    end
+    if type(g_db.log) ~= "table" then
+        g_db.log = {}
+    end
 
     local observed_key_map = {
         maxRequested = "max_requested",
@@ -901,6 +911,26 @@ local function init_db()
                 observed.min = tonumber(observed.min) or observed.min
             end
         end
+    end
+end
+
+-- Appends one accepted change to the saved change log. Values are stored as
+-- the value field shows them (hex for bitfields), shortened so a long
+-- serialized value cannot bloat the saved variables.
+local function log_change(entry, action, previous, actual)
+    if not g_db then
+        return
+    end
+    local log = g_db.log
+    log[#log + 1] = {
+        name = entry.name,
+        action = action,
+        old = ellipsize(display_edit_value(entry, previous), 120),
+        new = ellipsize(display_edit_value(entry, actual), 120),
+        time = time(),
+    }
+    while #log > LOG_LIMIT do
+        table.remove(log, 1)
     end
 end
 
@@ -1899,6 +1929,7 @@ do
             { "help", "Help range" },
             { "default", "Default" },
             { "changed", "Differs from default" },
+            { "favorite", "Favorite" },
         }
         for _, option in ipairs(has_options) do
             local value = option[1]
@@ -2306,7 +2337,7 @@ do
     g_hairline.register(header_border, "height")
 
     local header_name = make_text(header, FONT_META, "CVar", COLORS.muted)
-    header_name:SetPoint("LEFT", header, "LEFT", 6, 1)
+    header_name:SetPoint("LEFT", header, "LEFT", 22, 1)
 
     local header_gauge = make_text(header, FONT_META, "Gauge", COLORS.muted)
     header_gauge:SetPoint("CENTER", header, "CENTER", 0, 1)
@@ -2363,6 +2394,63 @@ g_scrollbar_thumb.background:SetColorTexture(
     1
 )
 g_scrollbar_thumb:SetAlpha(1)
+
+-- Builds the 7x7 favorite diamond from 1px tall textures. The first 12
+-- pieces are the outline and the last 5 fill the inside.
+g_frame.create_diamond = function(parent)
+    local mark = CreateFrame("Frame", nil, parent)
+    mark:SetSize(7, 7)
+    mark.outline = {}
+    mark.interior = {}
+    local pieces = {
+        { 3, 0, 1 }, { 2, 1, 1 }, { 4, 1, 1 }, { 1, 2, 1 }, { 5, 2, 1 },
+        { 0, 3, 1 }, { 6, 3, 1 }, { 1, 4, 1 }, { 5, 4, 1 }, { 2, 5, 1 },
+        { 4, 5, 1 }, { 3, 6, 1 },
+        { 3, 1, 1 }, { 2, 2, 3 }, { 1, 3, 5 }, { 2, 4, 3 }, { 3, 5, 1 },
+    }
+    for index, piece in ipairs(pieces) do
+        local texture = snap_texture(mark:CreateTexture(nil, "ARTWORK"))
+        texture:SetSize(piece[3], 1)
+        texture:SetPoint("TOPLEFT", mark, "TOPLEFT", piece[1], -piece[2])
+        local list = index <= 12 and mark.outline or mark.interior
+        list[#list + 1] = texture
+    end
+    return mark
+end
+
+-- Colors the diamond, or hides it when color is nil. The inside shows only
+-- when filled is true.
+g_frame.paint_diamond = function(mark, color, filled)
+    mark:SetShown(color ~= nil)
+    if not color then
+        return
+    end
+    for _, texture in ipairs(mark.outline) do
+        texture:SetColorTexture(color[1], color[2], color[3], 1)
+    end
+    for _, texture in ipairs(mark.interior) do
+        texture:SetColorTexture(color[1], color[2], color[3], 1)
+        texture:SetShown(filled == true)
+    end
+end
+
+-- The row's favorite mark is accent under the pointer, text for a
+-- favorite, muted on a hovered or selected row, and hidden otherwise.
+g_frame.update_favorite_mark = function(row)
+    local entry = row.entry
+    if not entry then
+        return
+    end
+    local color = nil
+    if row.favorite:IsMouseOver() then
+        color = COLORS.accent
+    elseif entry.favorite then
+        color = COLORS.text
+    elseif g_selected == entry or row:IsMouseOver() then
+        color = COLORS.muted
+    end
+    g_frame.paint_diamond(row.favorite.mark, color, entry.favorite)
+end
 
 -- Row construction helpers are scoped to this block because they are only
 -- needed while the pooled rows are built.
@@ -2469,8 +2557,8 @@ do
         selected_bar:Hide()
 
         local name_text = make_text(row, FONT_BODY, "", COLORS.text)
-        name_text:SetPoint("LEFT", row, "LEFT", 6, 0)
-        name_text:SetWidth(300)
+        name_text:SetPoint("LEFT", row, "LEFT", 22, 0)
+        name_text:SetWidth(284)
         name_text:SetJustifyH("LEFT")
         name_text:SetWordWrap(false)
 
@@ -2489,11 +2577,216 @@ do
         row.name_text = name_text
         row.value_text = value_text
         row.gauge = gauge
+
+        -- The favorite toggle covers the row's first 22px, left of the name.
+        local favorite = CreateFrame("Button", nil, row)
+        favorite:SetSize(ROW_HEIGHT, ROW_HEIGHT)
+        favorite:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+        favorite:SetFrameLevel(row:GetFrameLevel() + 1)
+        favorite:RegisterForClicks("LeftButtonUp")
+        favorite.mark = g_frame.create_diamond(favorite)
+        favorite.mark:SetPoint("TOPLEFT", favorite, "TOPLEFT", 7, -8)
+        favorite.mark:Hide()
+        row.favorite = favorite
         return row
     end
 
     for index = 1, ROW_COUNT do
         g_rows[index] = create_row()
+    end
+end
+
+-- Row tooltip. A custom panel shows the full name, value, default, and help
+-- after the pointer rests on a row for 0.5s. Within 0.1s of leaving a row,
+-- or while the panel is up, the next row shows at once.
+do
+    local panel = CreateFrame("Frame", nil, g_frame)
+    panel:SetFrameStrata("TOOLTIP")
+    panel:SetClampedToScreen(true)
+    panel:EnableMouse(false)
+    panel:Hide()
+    panel.background = snap_texture(panel:CreateTexture(nil, "BACKGROUND"))
+    panel.background:SetAllPoints(panel)
+    panel.background:SetColorTexture(
+        COLORS.surface[1],
+        COLORS.surface[2],
+        COLORS.surface[3],
+        1
+    )
+    add_border(panel, COLORS.border)
+
+    -- Name, value, default, and help, each { font, max lines, gap above }.
+    local line_specs = {
+        { FONT_BODY, 2, 0 },
+        { FONT_BODY, 4, 2 },
+        { FONT_BODY, 2, 2 },
+        { FONT_META, 8, 6 },
+    }
+    local lines = {}
+    for index, spec in ipairs(line_specs) do
+        local line = make_text(panel, spec[1], "", COLORS.text)
+        line:SetJustifyH("LEFT")
+        line:SetWordWrap(true)
+        line:SetSpacing(2)
+        line:SetMaxLines(spec[2])
+        line.gap = spec[3]
+        lines[index] = line
+    end
+
+    -- What the tooltip prints for a value. Line breaks become spaces, a
+    -- blank value reads empty, and binary values show their size.
+    local function describe(entry, raw)
+        local text = tostring(raw or "")
+        if entry.bitfield then
+            return format("Bitfield (%d bytes)", #text)
+        elseif entry.serialized then
+            return format("Serialized (%d bytes)", #text)
+        elseif text:match("^%s*$") then
+            return "empty"
+        end
+        return (text:gsub("[\r\n]+", " "))
+    end
+
+    local function set_line(line, text, color, font)
+        line:SetFontObject(font)
+        line:SetText(text)
+        line:SetTextColor(color[1], color[2], color[3], 1)
+        line:Show()
+    end
+
+    local function show_now(row, over_toggle)
+        local entry = row.entry
+        if not entry then
+            return
+        end
+        for _, line in ipairs(lines) do
+            line:Hide()
+        end
+        if over_toggle then
+            set_line(
+                lines[1],
+                entry.favorite and "Remove from favorites" or "Add to favorites",
+                COLORS.text,
+                FONT_META
+            )
+        else
+            local name_color = COLORS.text
+            if entry.readonly then
+                name_color = COLORS.muted
+            elseif entry.changed then
+                name_color = COLORS.changed
+            end
+            set_line(lines[1], entry.name, name_color, FONT_BODY)
+            set_line(
+                lines[2],
+                "Value: " .. describe(entry, entry.value),
+                COLORS.text,
+                FONT_BODY
+            )
+            if entry.changed then
+                set_line(
+                    lines[3],
+                    "Default: " .. describe(entry, entry.default_value),
+                    COLORS.muted,
+                    FONT_BODY
+                )
+            end
+            if entry.help and not entry.help:match("^%s*$") then
+                set_line(lines[4], entry.help, COLORS.text, FONT_META)
+            end
+        end
+
+        -- Width 0 lets each line report its unwrapped width. The panel
+        -- then wraps every line at the widest one, capped at 320.
+        local widest = 0
+        for _, line in ipairs(lines) do
+            if line:IsShown() then
+                line:SetWidth(0)
+                widest = max(widest, line:GetStringWidth() or 0)
+            end
+        end
+        local width = min(320, floor(widest + 0.999))
+        local y = 8
+        local first = true
+        for _, line in ipairs(lines) do
+            if line:IsShown() then
+                if not first then
+                    y = y + line.gap
+                end
+                first = false
+                line:SetWidth(width)
+                line:ClearAllPoints()
+                line:SetPoint("TOPLEFT", panel, "TOPLEFT", 8, -y)
+                y = y + floor((line:GetStringHeight() or 0) + 0.999)
+            end
+        end
+        local height = y + 8
+        panel:SetSize(width + 16, height)
+
+        -- Below the row with the text in line with the row name, or above
+        -- it when the panel would come within 8px of the window bottom.
+        panel:ClearAllPoints()
+        if (row:GetBottom() or 0) - 4 - height < (g_frame:GetBottom() or 0) + 8 then
+            panel:SetPoint("BOTTOMLEFT", row, "TOPLEFT", 14, 4)
+        else
+            panel:SetPoint("TOPLEFT", row, "BOTTOMLEFT", 14, -4)
+        end
+        panel:Show()
+    end
+
+    -- Counts down the show delay and the grace period after a leave.
+    local timer = CreateFrame("Frame", nil, g_frame)
+    timer:Hide()
+    timer:SetScript("OnUpdate", function(self, elapsed)
+        if self.row then
+            self.wait = self.wait - elapsed
+            if self.wait <= 0 then
+                local row = self.row
+                self.row = nil
+                if row:IsMouseOver() then
+                    show_now(row, row.favorite:IsMouseOver())
+                end
+            end
+        end
+        self.grace = max(0, (self.grace or 0) - elapsed)
+        if not self.row and self.grace == 0 then
+            self:Hide()
+        end
+    end)
+
+    g_frame.tooltip = panel
+
+    -- Hides the panel at once, so the next row waits the full delay.
+    g_frame.hide_tooltip = function()
+        panel:Hide()
+        timer.row = nil
+        timer.grace = 0
+        timer:Hide()
+    end
+
+    -- The pointer left a row or its toggle. The next row shows at once
+    -- within 0.1s.
+    g_frame.leave_tooltip = function()
+        timer.row = nil
+        if panel:IsShown() then
+            panel:Hide()
+            timer.grace = 0.1
+            timer:Show()
+        end
+    end
+
+    g_frame.request_tooltip = function(row, over_toggle)
+        if not row.entry or g_scroll_drag then
+            return
+        end
+        if panel:IsShown() or (timer.grace or 0) > 0 then
+            timer.row = nil
+            show_now(row, over_toggle)
+            return
+        end
+        timer.row = row
+        timer.wait = 0.5
+        timer:Show()
     end
 end
 
@@ -2789,6 +3082,8 @@ do
     -- Semantic key entries in flow order. Each is { region, fixed width or nil
     -- to measure the text, gap after }. 8px mark-to-label, 16px between entries.
     local key_items = {
+        { g_frame.create_diamond(g_key), 7, 8 },
+        { make_text(g_key, FONT_META, "Favorite", COLORS.muted), nil, 16 },
         { make_text(g_key, FONT_META, "Differs from default", COLORS.changed), nil, 16 },
         { create_observed_ticks(g_key), 12, 8 },
         { make_text(g_key, FONT_META, "Observed bounds", COLORS.muted), nil, 16 },
@@ -2797,6 +3092,7 @@ do
         { create_current_mark(g_key), 2, 8 },
         { make_text(g_key, FONT_META, "Current value", COLORS.muted), nil, 0 },
     }
+    g_frame.paint_diamond(key_items[1][1], COLORS.text, true)
     local hint = create_hint(g_key)
 
     -- Re-run after font resizes so measured advances never drift from
@@ -3122,12 +3418,13 @@ local function apply_ui_scale()
     METRICS.list_height = preset.height - METRICS.list_top - METRICS.list_bottom
 
     g_scroll_child:SetWidth(METRICS.list_width)
-    -- Name and value columns run from the row edges (6px inset) to 10px
-    -- short of the centered gauge, and the font string truncates with an
-    -- ellipsis at that width. A fixed character cap cut names off early.
+    -- The value column runs from the row's right edge (6px inset) to 10px
+    -- short of the centered gauge, and the name column mirrors it but starts
+    -- after the 22px favorite toggle. Font strings truncate with an ellipsis
+    -- at that width. A fixed character cap cut names off early.
     local column_width = round(METRICS.list_width / 2 - GAUGE_WIDTH / 2 - 16)
     for index = 1, ROW_COUNT do
-        g_rows[index].name_text:SetWidth(column_width)
+        g_rows[index].name_text:SetWidth(column_width - 16)
         g_rows[index].value_text:SetWidth(column_width)
     end
     g_scroll_frame:SetPoint(
@@ -3667,6 +3964,7 @@ local function render_row(row, entry)
     row.selected_bar:SetShown(is_selected)
     row.hover:SetShown(not is_selected and row:IsMouseOver())
     update_gauge(row.gauge, entry)
+    g_frame.update_favorite_mark(row)
 end
 
 local function update_scrollbar()
@@ -3719,7 +4017,10 @@ local function select_entry(entry)
     update_rows()
 end
 
-local function rebuild_view()
+-- Pass keep_scroll to stay at the current offset (a favorite toggle).
+-- Otherwise the list jumps back to the top for the new results.
+local function rebuild_view(keep_scroll)
+    g_frame.hide_tooltip()
     local query = trim(g_search_box:GetText() or "")
     local use_pattern = g_frame.regex_enabled == true
     local only_changed = g_changed_button.checked
@@ -3728,6 +4029,7 @@ local function rebuild_view()
     local filter_category = nil
     local filter_type = nil
     local filter_has = nil
+    local filter_value = nil
     for raw_token in query:gmatch("%S+") do
         local token = raw_token:lower()
         local token_key, value = token:match("^([%w_]+):(.+)$")
@@ -3739,6 +4041,8 @@ local function rebuild_view()
             filter_type = value
         elseif token_key == "has" then
             filter_has = value
+        elseif token_key == "value" then
+            filter_value = value
         elseif token == "changed" then
             only_changed = true
         else
@@ -3766,6 +4070,8 @@ local function rebuild_view()
             return entry.default_value ~= nil
         elseif facet == "changed" then
             return entry.changed
+        elseif facet == "fav" or facet == "favorite" then
+            return entry.favorite
         end
         return true
     end
@@ -3851,17 +4157,31 @@ local function rebuild_view()
         if filter_has and not has_state(entry, filter_has) then
             return false
         end
+        if filter_value then
+            -- Compare against what the value field shows (hex for bitfields).
+            local shown = display_edit_value(entry, entry.value):lower()
+            local exact = filter_value:match("^=(.*)$")
+            if exact then
+                return shown == exact
+            end
+            return shown:find(filter_value, 1, true) ~= nil
+        end
         return true
     end
 
     local range_count = 0
     g_view = {}
+    local has_favorite = false
 
     for _, entry in ipairs(g_entries) do
         -- Inferred once per rebuild, and filters and the type sort reuse it.
         entry.type_key = infer_value_type(entry):lower()
+        entry.favorite = g_db ~= nil and g_db.favorites[entry.name] == true
         if matches_filters(entry) and matches_text(entry) then
             g_view[#g_view + 1] = entry
+            if entry.favorite then
+                has_favorite = true
+            end
             if entry.range_text then
                 range_count = range_count + 1
             end
@@ -3870,7 +4190,9 @@ local function rebuild_view()
 
     local sort_key = g_frame.sort_key or "name"
     local sort_dir = g_frame.sort_dir or "asc"
-    if sort_key ~= "name" or sort_dir ~= "asc" then
+    -- Favorites pin above every other row in both directions. The sort key
+    -- only orders rows within the pinned and unpinned groups.
+    if has_favorite or sort_key ~= "name" or sort_dir ~= "asc" then
         local function sort_value(entry, token_key)
             if token_key == "type" then
                 return entry.type_key
@@ -3903,6 +4225,9 @@ local function rebuild_view()
             return nil
         end
         sort(g_view, function(a, b)
+            if a.favorite ~= b.favorite then
+                return a.favorite
+            end
             if sort_key == "changed" then
                 if a.changed ~= b.changed then
                     if sort_dir == "desc" then
@@ -3963,12 +4288,30 @@ local function rebuild_view()
         )
     )
     g_scroll_frame.scroll_target = nil
-    g_scroll_frame:SetVerticalScroll(0)
+    if keep_scroll ~= true then
+        g_scroll_frame:SetVerticalScroll(0)
+    end
     update_rows()
     update_detail()
 end
 
 g_frame.rebuild_results = rebuild_view
+
+g_frame.toggle_favorite = function(entry)
+    if not g_db then
+        return
+    end
+    local added = not g_db.favorites[entry.name]
+    g_db.favorites[entry.name] = added or nil
+    g_frame.hide_tooltip()
+    rebuild_view(true)
+    set_status(
+        format(
+            added and "Added %s to favorites" or "Removed %s from favorites",
+            entry.name
+        )
+    )
+end
 
 local function rescan()
     local selected_name = g_selected and g_selected.name
@@ -4029,7 +4372,9 @@ local function rescan()
     set_status(format("Loaded %d CVars.", #g_entries))
 end
 
-local function apply_value()
+-- The Set button and Enter pass no action (the click handler's first
+-- argument is the button), so anything but "reset" logs as a set.
+local function apply_value(action)
     local entry = g_selected
     if not entry then
         return
@@ -4082,6 +4427,12 @@ local function apply_value()
             table.remove(undo, 1)
         end
         g_frame.redo_stack = {}
+        log_change(
+            entry,
+            action == "reset" and "reset" or "set",
+            previous,
+            actual
+        )
     end
     local learned = record_observed_bound(entry, requested, previous)
     if learned then
@@ -4167,7 +4518,7 @@ local function reset_value()
     g_detail_edit:SetText(
         display_edit_value(g_selected, g_selected.default_value)
     )
-    apply_value()
+    apply_value("reset")
 end
 
 local function toggle_changed()
@@ -4363,15 +4714,26 @@ g_search_box:SetScript("OnEnterPressed", function(self)
         self:ClearFocus()
     end
 end)
-g_search_box:SetScript("OnEscapePressed", function(self)
-    self:ClearFocus()
-end)
-g_search_box:SetScript("OnKeyDown", function(self, pressed)
-    if pressed ~= "UP" and pressed ~= "DOWN" then
-        return
+
+-- Moves the selection for a navigation key and glides the selected row to
+-- the top of the list. Returns true when the key was a navigation key.
+-- PageUp and PageDown move by the rows the list shows at once.
+g_frame.move_selection = function(pressed)
+    local page = max(1, floor((g_scroll_frame:GetHeight() or 0) / ROW_HEIGHT))
+    local steps = {
+        UP = -1,
+        DOWN = 1,
+        PAGEUP = -page,
+        PAGEDOWN = page,
+        HOME = -#g_view,
+        END = #g_view,
+    }
+    local step = steps[pressed]
+    if not step then
+        return false
     end
     if #g_view == 0 then
-        return
+        return true
     end
     local index = 1
     if g_selected then
@@ -4382,14 +4744,60 @@ g_search_box:SetScript("OnKeyDown", function(self, pressed)
             end
         end
     end
-    if pressed == "DOWN" then
-        index = min(index + 1, #g_view)
-    else
-        index = max(index - 1, 1)
-    end
-    self.navigated = true
+    index = clamp(index + step, 1, #g_view)
     select_entry(g_view[index])
     scroll_to((index - 1) * ROW_HEIGHT, true)
+    return true
+end
+
+-- The first Escape clears the search text and a second one leaves the box.
+g_search_box:SetScript("OnEscapePressed", function(self)
+    if (self:GetText() or "") ~= "" then
+        self:SetText("")
+        return
+    end
+    self:ClearFocus()
+end)
+-- Home and End stay with the edit box, where they move the caret.
+g_search_box:SetScript("OnKeyDown", function(self, pressed)
+    if pressed == "HOME" or pressed == "END" then
+        return
+    end
+    if g_frame.move_selection(pressed) then
+        self.navigated = true
+    end
+end)
+
+-- With no edit box focused, the window takes navigation keys while the
+-- cursor is over it, and Escape closes a menu or clears the search before
+-- it closes the window. Every other key passes through to the game. The
+-- client forbids changing propagation in combat, so keys always pass
+-- through then (PLAYER_REGEN_DISABLED restores it before lockdown).
+g_frame:EnableKeyboard(true)
+g_frame:SetPropagateKeyboardInput(true)
+g_frame:SetScript("OnKeyDown", function(self, pressed)
+    if InCombatLockdown() then
+        return
+    end
+    local handled = false
+    if pressed == "ESCAPE" then
+        if g_frame.menu_catcher:IsShown() or g_scale_popup:IsShown() then
+            g_frame.close_menus()
+            g_scale_popup:Hide()
+            handled = true
+        elseif (g_search_box:GetText() or "") ~= "" then
+            g_search_box:SetText("")
+            handled = true
+        end
+    elseif self:IsMouseOver() then
+        handled = g_frame.move_selection(pressed)
+    end
+    self:SetPropagateKeyboardInput(not handled)
+end)
+g_frame:SetScript("OnKeyUp", function(self)
+    if not InCombatLockdown() then
+        self:SetPropagateKeyboardInput(true)
+    end
 end)
 
 g_changed_button:SetScript("OnClick", toggle_changed)
@@ -4411,8 +4819,17 @@ end)
 g_set_button:SetScript("OnClick", apply_value)
 g_reset_button:SetScript("OnClick", reset_value)
 
+-- Any scroll hides the tooltip and restarts the delay for the row now
+-- under the pointer.
 g_scroll_frame:SetScript("OnVerticalScroll", function()
     update_rows()
+    g_frame.hide_tooltip()
+    for _, row in ipairs(g_rows) do
+        if row.entry and row:IsMouseOver() then
+            g_frame.request_tooltip(row, row.favorite:IsMouseOver())
+            break
+        end
+    end
 end)
 g_scroll_frame:SetScript("OnMouseWheel", function(self, delta)
     -- Chain from the pending target so fast wheel spins accumulate.
@@ -4455,6 +4872,7 @@ g_scrollbar_thumb:SetScript("OnMouseUp", stop_scrollbar_drag)
 for index = 1, ROW_COUNT do
     local row = g_rows[index]
     row:SetScript("OnClick", function(self)
+        g_frame.hide_tooltip()
         if self.entry then
             select_entry(self.entry)
         end
@@ -4463,11 +4881,46 @@ for index = 1, ROW_COUNT do
         if self.entry and g_selected ~= self.entry then
             self.hover:Show()
         end
+        if self.entry then
+            g_frame.update_favorite_mark(self)
+            g_frame.request_tooltip(self, false)
+        end
     end)
     row:SetScript("OnLeave", function(self)
         self.hover:Hide()
+        if self.entry then
+            g_frame.update_favorite_mark(self)
+        end
+        g_frame.leave_tooltip()
+    end)
+
+    -- The toggle keeps the row's hover fill, since entering it makes the
+    -- row itself lose the pointer.
+    row.favorite:SetScript("OnEnter", function()
+        if row.entry then
+            row.hover:SetShown(g_selected ~= row.entry)
+            g_frame.update_favorite_mark(row)
+            g_frame.request_tooltip(row, true)
+        end
+    end)
+    row.favorite:SetScript("OnLeave", function()
+        row.hover:Hide()
+        if row.entry then
+            g_frame.update_favorite_mark(row)
+        end
+        g_frame.leave_tooltip()
+    end)
+    row.favorite:SetScript("OnClick", function()
+        g_frame.hide_tooltip()
+        if row.entry then
+            g_frame.toggle_favorite(row.entry)
+        end
     end)
 end
+
+g_frame:SetScript("OnHide", function()
+    g_frame.hide_tooltip()
+end)
 
 g_frame:SetScript("OnShow", function(self)
     self:Raise()
@@ -4526,6 +4979,11 @@ g_frame:SetScript("OnEvent", function(self, event, argument)
         end
     elseif event == "PLAYER_REGEN_DISABLED"
         or event == "PLAYER_REGEN_ENABLED" then
+        -- PLAYER_REGEN_DISABLED fires just before lockdown, the last moment
+        -- to make sure no key stays swallowed through combat.
+        if event == "PLAYER_REGEN_DISABLED" then
+            self:SetPropagateKeyboardInput(true)
+        end
         update_controls()
     elseif event == "UI_SCALE_CHANGED"
         or event == "DISPLAY_SIZE_CHANGED" then
@@ -4615,6 +5073,7 @@ do
         if not is_undo and #to > 20 then
             table.remove(to, 1)
         end
+        log_change(entry, verb, current, entry.value)
         apply_range(entry)
         select_entry(entry)
         local text = format(
@@ -4719,6 +5178,7 @@ do
             DEFAULT_CHAT_FRAME:AddMessage(
                 "|cffB7A3CCCVarBrowser|r commands: "
                     .. "/cvars | /cb, /cvars <name>, refresh, undo, redo, "
+                    .. "fav [name], log [count|name], clearlog, "
                     .. "ranges [name], clearrange <name>, clearranges, "
                     .. "sort name|type|scope|category|changed|range [asc|desc], "
                     .. "copy [value|raw|default|name|help|range] [cvar], "
@@ -4799,7 +5259,8 @@ do
                     .. "scope:account|character|local, "
                     .. "cat:graphics, "
                     .. "type:number|boolean|enum|text|list|bitfield|serialized, "
-                    .. "has:range|observed|help|default|changed; "
+                    .. "has:range|observed|help|default|changed|fav, "
+                    .. "value:<text> or value:=<exact>; "
                     .. "changed; /cb regex for Lua-pattern search"
             )
             return
@@ -4913,6 +5374,95 @@ do
             else
                 g_frame:Show()
             end
+            return
+        end
+
+        if lower == "fav" or lower:match("^fav%s+") then
+            if not g_frame:IsShown() then
+                g_frame:Show()
+            end
+            local fav_name = lower:match("^fav%s+(%S+)")
+            local entry = g_selected
+            if fav_name then
+                entry = g_by_name[fav_name]
+            end
+            if not entry then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    "|cffB7A3CCCVarBrowser|r "
+                        .. (fav_name and ("unknown CVar " .. fav_name)
+                            or "no CVar selected")
+                )
+                return
+            end
+            g_frame.toggle_favorite(entry)
+            DEFAULT_CHAT_FRAME:AddMessage(
+                "|cffB7A3CCCVarBrowser|r " .. entry.name
+                    .. (g_db.favorites[entry.name] and " added to favorites"
+                        or " removed from favorites")
+            )
+            return
+        end
+
+        if lower == "log" or lower:match("^log%s+") then
+            local log = g_db and g_db.log or {}
+            local argument = lower:match("^log%s+(%S+)")
+            local count = tonumber(argument or "10")
+            local shown = {}
+            if count then
+                for index = max(1, #log - floor(count) + 1), #log do
+                    shown[#shown + 1] = log[index]
+                end
+            else
+                for _, change in ipairs(log) do
+                    if tostring(change.name):lower() == argument then
+                        shown[#shown + 1] = change
+                    end
+                end
+            end
+            if #shown == 0 then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    "|cffB7A3CCCVarBrowser|r no logged changes"
+                        .. ((argument and not count) and (" for " .. argument) or "")
+                )
+                return
+            end
+            DEFAULT_CHAT_FRAME:AddMessage(
+                format(
+                    "|cffB7A3CCCVarBrowser|r %d of %d logged change%s, oldest first",
+                    #shown,
+                    #log,
+                    #log == 1 and "" or "s"
+                )
+            )
+            for _, change in ipairs(shown) do
+                local old_text = tostring(change.old or "")
+                local new_text = tostring(change.new or "")
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    format(
+                        "  %s %s %s: %s -> %s",
+                        date("%Y-%m-%d %H:%M", tonumber(change.time) or 0),
+                        tostring(change.action or "set"),
+                        tostring(change.name),
+                        old_text == "" and "empty" or old_text,
+                        new_text == "" and "empty" or new_text
+                    )
+                )
+            end
+            return
+        end
+
+        if lower == "clearlog" then
+            local count = g_db and #g_db.log or 0
+            if g_db then
+                g_db.log = {}
+            end
+            DEFAULT_CHAT_FRAME:AddMessage(
+                format(
+                    "|cffB7A3CCCVarBrowser|r cleared %d logged change%s",
+                    count,
+                    count == 1 and "" or "s"
+                )
+            )
             return
         end
 

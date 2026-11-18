@@ -33,6 +33,16 @@
 - Slants are font glyphs: gauge open ends use `/` or `\` centered on the
   track edge; the footer key shows both glyphs, `/` and `\`, with a gap.
   Glyph rendering stays crisp at integer font sizes.
+- Favorites live in `g_db.favorites[canonicalName]` and always sort first.
+  The row toggle's diamond is drawn from 1px textures
+  (`g_frame.create_diamond`) because no bundled font has a star glyph.
+- The change log is `g_db.log` (newest 200, oldest first). Only browser
+  sets, resets, undos, and redos are logged, not external `CVAR_UPDATE`s.
+- The window takes keyboard input only out of combat and, for list keys,
+  only while the cursor is over it. `SetPropagateKeyboardInput` is
+  combat-restricted since 10.1.5, so OnKeyUp and `PLAYER_REGEN_DISABLED`
+  restore propagation to true. Never leave it false.
+- The row tooltip is a custom panel (`g_frame.tooltip`), not `GameTooltip`.
 - Minimap button lives on `Minimap`, saves `g_db.minimap_angle`, drags around
   the ring, and toggles the browser on left-click. Keep the button globally
   named and its icon globally named `<Button>Icon`, created last, for

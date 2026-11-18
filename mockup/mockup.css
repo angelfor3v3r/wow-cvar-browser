@@ -540,15 +540,16 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 /* The 24px right offset plus 30px right padding keeps the label columns
    aligned with the rows, while the bottom divider runs on to x=896, flush
    with the scrollbar column's right edge and the detail separator's right
-   end. */
+   end. The 22px left padding skips the favorite cell, so `CVar` starts at
+   the row name's x=22. */
 .list-header {
   position: absolute;
   top: 132px; left: 24px; right: 24px;
   height: 16px;
   display: grid;
-  grid-template-columns: 300px 1fr 300px;
+  grid-template-columns: 284px 1fr 300px;
   align-items: start;
-  padding: 0 30px 0 6px;
+  padding: 0 30px 0 22px;
   color: var(--muted);
   font-size: var(--small-size);
   line-height: 16px;
@@ -581,14 +582,17 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 }
 .rows-viewport::-webkit-scrollbar { display: none; }
 
+/* Row columns match the runtime anchors: the 22x22 favorite cell at x 0-21,
+   the name at x=22 (284 wide, so it still ends at x=306), the gauge
+   centered, and the value right-aligned 6px in from the right edge (300
+   wide). The selection bar overlays the cell's first 2px. */
 .row {
   position: relative;
   height: var(--row-height);
   display: grid;
-  grid-template-columns: 300px 1fr 300px;
+  grid-template-columns: 22px 284px 1fr 300px;
   align-items: center;
-  padding: 0 6px;
-  border-left: 2px solid transparent;
+  padding: 0 6px 0 0;
   cursor: pointer;
   color: var(--text);
   font-size: var(--body-size);
@@ -596,7 +600,12 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 /* Only an unselected row under the pointer gets the hover fill. Selecting
    the hovered row clears it, and after a scroll it follows the pointer. */
 .row:not(.selected):hover { background: var(--surface-hover); }
-.row.selected { background: rgba(var(--accent-rgb), .14); border-left-color: var(--accent); }
+.row.selected { background: rgba(var(--accent-rgb), .14); }
+.row.selected::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--accent);
+}
 .row .name, .row .value { font-family: var(--font-data); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row .value { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
 .row.selected .name { color: var(--accent); }
@@ -608,6 +617,79 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
+
+/* Favorite toggle. The 7x7 pixel diamond sits at (7, 8) in its 22x22 cell.
+   A favorite shows the filled mark in `text` on every row. Otherwise only
+   the hovered or selected row shows the hollow outline, in `muted`. The
+   pointer over the cell turns either mark `accent`. */
+.fav-toggle {
+  position: relative;
+  align-self: stretch;
+  width: 22px;
+  padding: 0; border: 0; background: transparent;
+  color: var(--muted); cursor: pointer;
+}
+.fav-toggle:focus-visible { outline: none; }
+.fav-mark {
+  position: absolute;
+  left: 7px; top: calc((var(--row-height) - 6px) / 2);
+  display: block;
+  fill: currentColor;
+  shape-rendering: crispEdges;
+  visibility: hidden;
+}
+.fav-mark .fav-fill { display: none; }
+.row:hover .fav-mark,
+.row.selected .fav-mark,
+.fav-toggle[aria-pressed="true"] .fav-mark { visibility: visible; }
+.fav-toggle[aria-pressed="true"] { color: var(--text); }
+.fav-toggle[aria-pressed="true"] .fav-fill { display: inline; }
+.fav-toggle:hover { color: var(--accent); }
+
+/* Row tooltip. Flat `surface` panel with a 1px `border`, no shadow, like
+   the popups. Text sits 8px in from the outer edge on every side and wraps
+   at 320px, so the panel is at most 336px wide and otherwise as wide as its
+   widest line. Lines stack with 2px gaps (6px before the help), and wrapped
+   lines keep 2px of spacing. Each line is one runtime FontString, n lines
+   tall = n x size + (n - 1) x 2. Here a block's line-height is size + 2, so
+   blocks touch for a 2px gap, and the first and last pull 1px into the
+   padding to keep the 8px text inset. */
+.row-tooltip {
+  position: absolute;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  max-width: 336px;
+  padding: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  pointer-events: none;
+}
+.row-tooltip[hidden] { display: none; }
+.tip-line {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--body-size);
+  line-height: calc(var(--body-size) + 2px);
+}
+.tip-line:first-child { margin-top: -1px; }
+.tip-line:last-child { margin-bottom: -1px; }
+.tip-name { font-family: var(--font-data); -webkit-line-clamp: 2; }
+.tip-name.changed { color: var(--changed); }
+.tip-name.readonly { color: var(--muted); }
+.tip-value { font-family: var(--font-data); font-variant-numeric: tabular-nums; -webkit-line-clamp: 4; }
+.tip-default { color: var(--muted); -webkit-line-clamp: 2; }
+.tip-help, .tip-action {
+  font-size: var(--small-size);
+  line-height: calc(var(--small-size) + 2px);
+}
+.tip-help { margin-top: 4px; -webkit-line-clamp: 8; }
 
 .empty-state {
   padding: 14px 6px;
@@ -771,6 +853,8 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 /* 9x9 so the outline reads as a perfect square with its 1px lines. */
 .key-readonly { width: 9px; height: 9px; border: 1px solid var(--muted); background: transparent; }
 .key-current { width: 2px; height: 8px; background: var(--text); }
+/* The filled 7x7 favorite diamond, the same pixels as the row mark. */
+.key-favorite { width: 7px; height: 7px; fill: var(--text); shape-rendering: crispEdges; }
 .key-open-marks { width: 14px; height: 8px; margin: 0 4px; vertical-align: -1px; shape-rendering: crispEdges; }
 .key-open-marks line { stroke: var(--muted); stroke-width: 1; opacity: .75; }
 .key-dot { display: inline-block; width: 2px; height: 2px; background: var(--dot); margin: 0 4px; vertical-align: middle; }

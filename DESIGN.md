@@ -22,7 +22,13 @@ below incorporates that critique.
 - Runtime: no HTML/CSS, flexbox, border-radius, or web fonts.
 - Textures and FontStrings only; 1px borders are drawn with textures.
 - Runtime fonts: NotoSans-Regular/SemiBold for chrome and data,
-  Inter-SemiBold for the check glyph only. Bundled in `Media/`.
+  Inter-SemiBold (`FONT_CHECK`) for the ✓ ↩ ↪ glyphs only. Bundled in
+  `Media/`. No bundled font has ★ U+2605, ☆ U+2606, ✦ U+2726, or ♥ U+2665
+  (checked with fontTools), so the favorite mark is drawn from 1px
+  textures, like the funnel and sort icons. Inter's ◆ U+25C6 / ◇ U+25C7
+  were rejected: glyph ink drifts with font metrics (the undo/redo offsets
+  show the cost) and antialiased diagonals would sit beside pixel-drawn
+  icons.
 - IBM Plex, Manrope, Space Grotesk, and JetBrains Mono are mock-preview
   only, not runtime.
 - No Lua refactor is part of the mockup phase.
@@ -133,11 +139,12 @@ label and menu selection only.
 ├──────────────────────────────────────────────────────────────────────┤
 │  [ Search CVars... ] [.*] [ ] Changed only   21 / 21 CVars, 7 range  │
 │  [Filters 2][Sort changed] [↩][↪] [Copy]                             │
-│  CVar                              Gauge                 Value        │
+│    CVar                            Gauge                 Value        │
 │  ──────────────────────────────────────────────────────────────────  │
-│  assaoFadeOutTo                    ────────┐             50.0        │
-│  nameplateMaxDistance         ┌─────┃┃─────┘  45 (Default: 40)      │
-│  farclip                              ·                             │
+│  ◆ farclip                            ·       10000 (Default: 1000)  │
+│  ◆ nameplateMaxDistance       ┌─────┃┃─────┘  45 (Default: 40)      │
+│    assaoFadeOutTo                  ────────┐             50.0        │
+│  ◇ giQuality       (hovered row)   ├───┃────┤      4 (Default: 3)    │
 │  ...                                                                  │
 │                                                         ▐ scrollbar  │
 ├──────────────────────────────────────────────────────────────────────┤
@@ -146,10 +153,14 @@ label and menu selection only.
 │  ASSAO Fade Out To [0.0, ~ ] Distance at which the effect fades out. │
 │  [ 50.0                    ] [ Set ] [ Reset to default ]  status    │
 ├──────────────────────────────────────────────────────────────────────┤
-│  Differs from default  ┃┃ Observed bounds  □ Read-only  ┃ Current value │
+│  ◆ Favorite  Differs from default  ┃┃ Observed bounds  □ Read-only … │
 │  Slanted end [slants] means no limit. Dot [dot] means no known range.  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+`◆` is a favorite (filled mark); `◇` is the hollow mark the hovered or
+selected row shows when it is not a favorite. Favorites sit above every
+other row.
 
 The toolbar keeps its row (search, regex toggle, Changed only, count); a
 second 26px control row holds filters, sort, history, and copy.
@@ -271,7 +282,10 @@ across rows. Domain is the union of help and observed bounds.
     Character / Local), Category (All + the categories present in the
     list), Type (All / Number / Text / Boolean / Enum / List / Bitfield /
     Serialized, a fixed list; see Value type), Has (Range / Observed
-    bounds / Help range / Default / Differs from default). Scope, category,
+    bounds / Help range / Default / Differs from default / Favorite).
+    Favorite comes last because it is the user's own set, not a property
+    of the data; it reads `has:favorite` in the chip tooltip, the same
+    filter as typing `has:fav`. Scope, category,
     and type are single-select; Has is multi-select and ANDs. Checked rows
     show the same drawn tick as the checkbox. The header reads `Filters`
     with a right-aligned **Clear all** button (disabled when nothing is
@@ -282,12 +296,12 @@ across rows. Domain is the union of help and observed bounds.
   - **Popup height rule**: no popup may exceed the window. The control
     row's menus open at y=130 in the 678px content box and are capped at
     536px tall (12px of air above the window edge); taller content — the
-    filter menu at its natural ~686px — scrolls inside the panel over an
+    filter menu at its natural ~710px — scrolls inside the panel over an
     8px muted thumb in the list-scrollbar language. The wheel glides the
     panel 40px per notch (see Scrolling). The control row's menu
     rows are a fixed 24px with nowrap labels, so reachability is identical
     at 13/14/15/16 text sizes: the Has group always ends up behind the same
-    ~150px of scroll and every row is reachable in all cases. Opening upward
+    ~174px of scroll and every row is reachable in all cases. Opening upward
     is not an option — the control row sits near the window's top edge.
   - **Sort chip**: 10×10 sort glyph at 4px from the chip's left edge + one
     label string at x=18 (icon + 4px gap): `Sort <key> <dir>`, e.g.
@@ -337,14 +351,117 @@ across rows. Domain is the union of help and observed bounds.
   16px header band — for 3px clearance above the separator, whose 1px line
   runs along the band's bottom to the scrollbar column's right edge — the
   same right end as the detail separator, so the two separators bracket the
-  scrollbar.
-- **Rows**: 22px; selected rows get the accent fill + 2px left accent bar.
+  scrollbar. `CVar` is `LEFT` at (+22, +1), over the row names (was +6);
+  the favorite cell has no header label. `Gauge` and `Value` are unchanged.
+- **Rows**: 22px; selected rows get the accent fill + 2px left accent bar
+  (x 0–1, drawn over the favorite cell). Columns from the row's left edge:
+  the 22×22 favorite cell at x 0–21 (see Favorite toggle), the name `LEFT`
+  at (+22, 0) with width 284 (was +6 / 300, so it still ends at x=306),
+  the 88px gauge centered, and the value `RIGHT` at (−6, 0) with width 300.
   The `surface_hover` fill shows only while the pointer is over a row that
-  is not selected: selecting the hovered row clears it, and after a scroll
-  it follows whatever row is now under the pointer, never the row that used
-  to be there. The partly scrolled-off top row is always drawn: the first
-  drawn row is `floor(offset / 22)`, so a mid-row offset clips that row at
-  the list edge instead of leaving an empty strip.
+  is not selected, including over its favorite cell: selecting the hovered
+  row clears it, and after a scroll it follows whatever row is now under
+  the pointer, never the row that used to be there. The partly scrolled-off
+  top row is always drawn: the first drawn row is `floor(offset / 22)`, so
+  a mid-row offset clips that row at the list edge instead of leaving an
+  empty strip.
+- **Favorite toggle**: a `Button` child of each pooled row, 22×22,
+  `TOPLEFT` on the row's `TOPLEFT` (0, 0), one frame level above the row,
+  left click only. It holds a 7×7 mark frame at `TOPLEFT` (7, −8) of the
+  toggle, so the diamond covers row pixels x 7–13, y 8–14. An odd-height
+  mark cannot center on a 22px row; its widest pixel row (y 11) sits just
+  below the row's center line, level with the cap-height middle of the
+  name. The mark is 17 `snap_texture` textures, each 1px tall, at
+  whole-pixel `TOPLEFT` offsets from the mark frame (x, −y), `ARTWORK`
+  layer:
+  - Outline, 12 textures of 1×1: (3,0) (2,1) (4,1) (1,2) (5,2) (0,3) (6,3)
+    (1,4) (5,4) (2,5) (4,5) (3,6).
+  - Interior, 5 textures as (x, y, width): (3,1,1) (2,2,3) (1,3,5) (2,4,3)
+    (3,5,1). Outline plus interior is the solid diamond, rows 1/3/5/7/5/3/1
+    wide.
+
+  All 17 always share one color. States, first match wins:
+
+  | State | Outline | Interior |
+  | --- | --- | --- |
+  | Pointer over the toggle, favorite | `accent` | shown |
+  | Pointer over the toggle, not favorite | `accent` | hidden |
+  | Favorite | `text` | shown |
+  | Not favorite, row hovered or selected | `muted` | hidden |
+  | Not favorite, otherwise | hidden | hidden |
+
+  Favorites show on every row. A non-favorite shows nothing at rest, so the
+  list stays quiet. Read-only and locked rows behave the same (the mark is
+  the user's, not data state). Clicking the toggle flips the favorite
+  (`g_frame.toggle_favorite`), never selects the row, keeps the scroll
+  offset, and hides the row tooltip (cold). The row then moves into or out
+  of the favorites group, and the hover fill and toggle state follow
+  whatever row is now under the pointer. The status line confirms in the
+  default (success) tone: `Added <name> to favorites` or `Removed <name>
+  from favorites`. Because the toggle is a child frame, entering it fires
+  the row's `OnLeave`; the toggle's `OnEnter` must show the row's hover
+  fill (unless the row is selected) and its `OnLeave` must leave the fill
+  on while `row:IsMouseOver()`, so the row reads as hovered across its
+  whole width. The pooled marks cost 17 × 20 = 340 textures.
+- **Favorites order**: favorites sort above every other row in both
+  directions; the sort key and direction only order rows inside the
+  favorites group and the rest, with the usual name-ascending tie rule. No
+  divider or group header: the column of filled marks is the group marker.
+  Favorites are not a sort key, so they never turn the Sort chip accent.
+- **Vocabulary**: the feature is called favorite everywhere the user reads
+  it: the `Favorite` facet and key entry, the tooltip lines, the status
+  line, and chat (`<name> added to favorites` / `<name> removed from
+  favorites`, never pinned/unpinned).
+- **Row tooltip**: a custom panel, not `GameTooltip`, whose gold-edged
+  backdrop and font objects would break the flat plum language. A `Frame`
+  parented to `g_frame` (so it hides with the window), strata `TOOLTIP`,
+  `SetClampedToScreen(true)`, mouse disabled, hidden by default. `surface`
+  fill and a 1px `border` drawn with the custom snapped hairlines (joins
+  `g_frame.snap_boxes`), no shadow.
+  - **Lines**: FontStrings stacked top to bottom, each `TOPLEFT` on the
+    previous one's `BOTTOMLEFT`, justify-H left, word wrap on, wrapped
+    lines at `SetSpacing(2)`, overflow cut by `SetMaxLines` (WoW ends the
+    last line with an ellipsis):
+
+    | # | Text | Font | Color | Shown | Max lines | Gap above |
+    | --- | --- | --- | --- | --- | --- | --- |
+    | 1 | CVar name | `FONT_BODY` | `muted` if read-only, else `changed` if changed, else `text` (never `accent`) | always | 2 | — |
+    | 2 | `Value: <value>` | `FONT_BODY` | `text` | always | 4 | 2 |
+    | 3 | `Default: <default>` | `FONT_BODY` | `muted` | changed only | 2 | 2 |
+    | 4 | help text, trimmed | `FONT_META` | `text` | help not blank | 8 | 6 |
+
+    `<value>` is the full current value with CR/LF runs turned into one
+    space (rows cut it at 28 characters), `empty` when blank, and
+    `Bitfield (N bytes)` / `Serialized (N bytes)` for binary values, as
+    the row shows. `<default>` uses the detail meta wording: the default,
+    `empty`, or `Bitfield (N bytes)` / `Serialized (N bytes)`.
+  - **Toggle line**: while the pointer is over the favorite toggle the
+    panel holds one line instead, `Add to favorites` or `Remove from
+    favorites`, `FONT_META`, `text`, same panel, sizing, and anchor.
+  - **Size**: text inset 8px on every side (first line `TOPLEFT` at
+    (8, −8)). Text width W = min(320, ceil(widest line's unwrapped width));
+    every line gets `SetWidth(W)` and wraps there. Panel width W + 16,
+    height 16 + the line heights + the gaps, each rounded up to whole
+    pixels. The 320 cap holds at every preset.
+  - **Anchor**: placed once per show, never following the cursor. Below
+    the row: panel `TOPLEFT` on the row's `BOTTOMLEFT` at (14, −4), so the
+    text column lines up with the row name at x=22 and the tooltip reads
+    as the row unfolded. If the panel's bottom would then come within 8px
+    of the window's bottom edge, anchor it above instead: `BOTTOMLEFT` on
+    the row's `TOPLEFT` at (14, 4). If that would come within 8px of the
+    window's top edge too, keep it below.
+  - **Timing**: shows after the pointer rests 0.5s on a target (a row, or
+    a row's favorite toggle as a separate target). Moving inside the
+    target never restarts the delay. Warm handoff: while the panel is up,
+    or within 0.1s after it hid because the pointer left a row, the next
+    target shows at once. Hides warm on `OnLeave` with no new target.
+    Hides cold (the next show waits the full 0.5s) on a click on a row or
+    toggle, a list rebuild (search, filter, sort, favorite toggle, rescan),
+    a popup menu or the copy box opening (it never shows while one is
+    open), and the window hiding. Any change of the list's scroll offset
+    (wheel, glide, keyboard navigation, thumb drag) hides it cold and
+    restarts the 0.5s for the row now under the pointer, so it returns
+    once the list comes to rest; nothing arms during a thumb drag.
 - **Gauge column**: 88px gauge centered in the middle column.
 - **Value column**: current value in text; changed rows append a muted
   `(Default: N)`, no strikethrough; a blank default reads `(Default: empty)`.
@@ -397,11 +514,19 @@ across rows. Domain is the union of help and observed bounds.
   the 30s; an empty message clears immediately. Expiry is uniform on
   purpose: the status line reports what just happened, it never holds state
   that outlives the next look.
-- **Semantic key**: glossary marks with plain-language labels: changed lilac
-  text = differs from default; tally ticks (12×8: two 1×6 ticks 10px apart,
+- **Semantic key**: glossary marks with plain-language labels, in the
+  row's left-to-right order: filled favorite diamond (the toggle's 7×7
+  pixels, all 17 textures in `text`) = favorite; changed lilac text =
+  differs from default; tally ticks (12×8: two 1×6 ticks 10px apart,
   rows 1–6) = observed
   bounds; hollow square (9×9, 1px lines) = read-only; cursor (2×8) = current
-  value. Entries sit 16px apart, marks 8px from their labels. The hint shows
+  value. Entries sit 16px apart, marks 8px from their labels. The favorite
+  entry is first: `key_items` gains `{ favorite mark, 7, 8 }` and
+  `{ "Favorite" FONT_META muted, nil, 16 }` ahead of "Differs from
+  default"; the mark frame is 7×7, `LEFT` anchored like the other marks.
+  The row stays clear of the right-aligned hint at every preset
+  (approximate widths, key entries plus hint: ≈690 of 752px at Compact,
+  ≈760 of 872 at Standard, ≈830 of 992 at Large). The hint shows
   the marks inline as the runtime draws them: two font glyphs `/ \` in a
   14px group and the 2px `--dot` dot identical to the unknown-range dot.
   Copy: "Slanted end [slants] means no limit. Dot [dot] means no known
@@ -416,6 +541,10 @@ across rows. Domain is the union of help and observed bounds.
 | Hover | `surface_hover` fill on the unselected row under the pointer; never on the selected row |
 | Selected | accent-tinted fill + 2px left accent bar |
 | Changed CVar | name in `changed`; value text; muted `(Default: N)`; cursor `changed` |
+| Favorite | filled 7×7 diamond in `text` in the favorite cell; row sorts into the top group |
+| Not favorite, hovered or selected | hollow 7×7 diamond in `muted` |
+| Pointer over favorite toggle | diamond (filled or hollow) in `accent`; row keeps its hover fill |
+| Row tooltip | `surface` panel, 1px `border`, under the row with its text at the name's x=22 (above near the window bottom) |
 | Help range | 3px muted ticks; meta `Range help` |
 | Observed range | 6px muted-teal ticks; meta `Observed` in teal |
 | Open bound | slanted end at that side (no limit) |
@@ -436,6 +565,7 @@ across rows. Domain is the union of help and observed bounds.
 | Copy box open | 280×30 box under Copy, `accent` border, text highlighted; status `Press Ctrl+C to copy <field>: <cvar>` |
 | Empty result set | muted empty-state line in the list; count `0 / N CVars` |
 | Menu open | popup below its chip or box; the opener keeps its accent border while open |
+| Favorites filter | Has `Favorite` ticked; Filters chip counts it; tooltip lists `has:favorite` |
 
 ## Interaction
 
@@ -446,19 +576,48 @@ across rows. Domain is the union of help and observed bounds.
   [reset]`; `/cvars copy [value|raw|default|name|help|range] [cvar]` opens
   the copy box with that field (see Copy box); `/cvars smooth [on|off]`
   sets smooth scrolling (no argument flips it); `/cvars clearranges` clears
-  observed bounds; `/cvars clearrange <name>` clears one.
-- Search filters by name or help text and supports `scope:`, `category:`,
-  `type:`, `has:`, and `changed` filters. Up/Down moves the selection
-  through the results and glides the selected row to the top of the list.
-  Enter selects the row picked with Up/Down — or, with no arrow navigation
-  since the search text last changed, the first result — then focuses the
-  value field (unless the CVar is read-only, locked, or secure in combat).
-  With no results Enter leaves the search box. The filter and sort chips
-  are the visual face of these command filters: selecting facets in the
-  filter menu is equivalent to typing the same `scope:`/`type:`/`has:`
-  terms, and both routes combine into one filter set. The regex chip
-  switches the search box between literal and regular-expression matching
-  (an invalid pattern simply matches nothing).
+  observed bounds; `/cvars clearrange <name>` clears one; `/cvars fav
+  [name]` toggles the favorite of the named CVar, or the selected one, and
+  confirms in chat (see Vocabulary). The change log is chat only, with no
+  window UI: `/cvars log [count|name]` prints it and `/cvars clearlog`
+  empties it.
+- Search syntax: the text splits on whitespace into lowercased tokens.
+  Plain words must each appear in the name or the help text (regex mode
+  joins them into one pattern). Filter terms:
+  - `scope:<s>`, `category:<c>` (or `cat:<c>`): the scope or category
+    contains the text.
+  - `type:<t>`: the value type is exactly t (see Value type).
+  - `has:<facet>`: `range`, `observed`, `help`, `default`, `changed`, or
+    `fav` (also `favorite`). An unknown facet filters nothing out.
+  - `value:<x>`: the current value contains x. `value:=<x>`: the current
+    value is exactly x. Both ignore case and compare the text the value
+    field shows (hex for bitfield and serialized values). Tokens never
+    hold spaces, so a value with spaces only matches by one of its words.
+  - `changed`: same as Changed only.
+
+  A later term with the same key replaces an earlier one. The filter and
+  sort chips are the visual face of these command filters: selecting
+  facets in the filter menu is equivalent to typing the same
+  `scope:`/`type:`/`has:` terms, and both routes combine into one filter
+  set. The regex chip switches the search box between literal and
+  regular-expression matching (an invalid pattern simply matches nothing).
+- Keyboard: Up/Down move the selection one row, PageUp/PageDown one page
+  (the whole rows the list shows, `floor(list height / 22)`, 15 at
+  Standard), Home/End to the first or last result. The selected row glides
+  to the top of the list (see Scrolling). In the search box Up/Down and
+  PageUp/PageDown navigate while Home/End stay with the caret. With no
+  edit box focused, all six navigate while the cursor is over the window,
+  out of combat (in combat every key passes through to the game); any
+  other key passes through. Enter in the search box selects the row
+  picked with the navigation keys — or, with none since the search text
+  last changed, the first result — then focuses the value field (unless
+  the CVar is read-only, locked, or secure in combat). With no results
+  Enter leaves the search box.
+- Escape, first match wins: closes an open menu; in the search box, clears
+  its text, and a second Escape leaves the box; with no edit box focused,
+  clears the search text, and a second Escape closes the window. The value
+  field and copy box keep their own Escape (leave the field, close the
+  box).
 - Filter menu: click the Filters chip to open; the menu stays open while
   facets toggle so several can be set in one pass. Scope/category/type are
   single-select (picking one replaces the previous); Has facets are
@@ -470,7 +629,8 @@ across rows. Domain is the union of help and observed bounds.
   keys start asc. Keys compare lowercase (type sorts by the value type's
   name); the direction flips only the key, and ties always fall back to
   name ascending. Rows with no range width sort last in both directions.
-  The chip always shows the live `key dir`.
+  Favorites stay above everything in both directions (see Favorites
+  order). The chip always shows the live `key dir`.
 - Size menu: click the Size box in the title bar and pick Auto, Compact,
   Standard, or Large to apply that preset — window geometry and the integer
   font sizes change with it, and the choice is saved. Auto resolves by
@@ -490,8 +650,8 @@ across rows. Domain is the union of help and observed bounds.
   uppercase digits per byte, so status lines show hex too. Set ignores
   whitespace; an odd-length or non-hex entry fails with `Bitfield/serialized
   value must be an even-length hex string.`
-- Click a row to select. Edit the value; Enter or Set applies.
-- Escape closes when no edit box has focus.
+- Click a row to select it; click its favorite cell to toggle the favorite
+  without selecting it. Edit the value; Enter or Set applies.
 - Wheel and scrollbar scroll the list (see Scrolling); the scrollbar thumb
   must track the viewport exactly, including after font, size, or filter
   changes.
@@ -510,11 +670,12 @@ offset, list and filter popup, smooth or not, is a whole pixel.
 - **Thumb drag**: the list follows the thumb 1:1 while held, with no
   easing. On release it glides to the nearest whole row (a multiple of
   22px, clamped into the range).
-- **Up/Down in search**: glides so the newly selected row sits at the top
-  of the list, clamped at the bottom of the range.
+- **Navigation keys** (Up/Down/PageUp/PageDown/Home/End, see Keyboard):
+  glide so the newly selected row sits at the top of the list, clamped at
+  the bottom of the range.
 - **Search, filter, Changed only, regex, or sort change**: the list jumps
   instantly to the top and any pending glide is dropped. Setting or
-  resetting a value keeps the offset.
+  resetting a value, or toggling a favorite, keeps the offset.
 - **Filter popup wheel**: glides 40px per notch, accumulating the same way.
 - **Range change** (a size preset resizing the list): a list scrolled to the
   bottom stays pinned to the bottom; otherwise the offset and any pending
@@ -544,15 +705,25 @@ blocks local font loading from file URLs). Controls:
   returns to Release.
 - 8px grid overlay and Reset.
 - **States** scenario bar — one click per acceptance state, each resetting
-  the window to a known base first and noting the change in the status line
-  (which auto-clears after 30s like every status message):
+  the window to a known base first (favorites back to `farclip` and
+  `nameplateMaxDistance`) and noting the change in the status line (which
+  auto-clears after 30s like every status message):
   - *Active filters*: `scope:account, type:number, has:changed` set in the
     filter menu; the Filters chip reads `Filters 3` in accent.
   - *Active sort*: the sort chip reads `Sort changed desc` in accent.
   - *Undo & redo disabled*: edit history cleared; both icon buttons dimmed.
   - *Copy disabled*: an unmatched search empties the list — empty state
     line, count `0 / N CVars`, Copy disabled, detail cleared.
+  - *Favorites only*: Has `Favorite` ticked; two rows, `Filters 1`.
+  - *Value filter*: search `value:=1` keeps the CVars whose value is
+    exactly `1`.
+  - *Row tooltip*: search `realm`, with the tooltip held open on
+    `realmList` (long wrapped value and help) until the pointer reaches the
+    list.
   - *Default*: everything at rest.
+- Favorites, the tooltip, and the keyboard keys are live: hover a row for
+  0.5s, click a favorite cell, or press the navigation keys with the
+  pointer over the window.
 
 The mockup has no external dependencies. It is intentionally interactive:
 Set, Reset, clamp, ignored, read-only, search, regex, filter, sort,

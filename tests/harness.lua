@@ -2,10 +2,11 @@
 --
 -- Run it from the addon folder with `lua tests/harness.lua`. It exits
 -- non-zero if any check fails. It covers load, ADDON_LOADED, scan,
--- set/clamp/reset, undo/redo, read-only selection, slash commands, copy,
--- CVAR_UPDATE casing, pattern search, smooth scrolling, the pixel-locked
--- window drag, and main-chunk register headroom. Pixel-level visuals still
--- need an in-game /reload and /cvars.
+-- set/clamp/reset, undo/redo, the change log, read-only selection, slash
+-- commands, copy, CVAR_UPDATE casing, pattern search, the value filter,
+-- favorites, the row tooltip, keyboard navigation, smooth scrolling, the
+-- pixel-locked window drag, and main-chunk register headroom. Pixel-level
+-- visuals still need an in-game /reload and /cvars.
 
 local SCRIPT_DIR = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
 local ADDON_PATH = SCRIPT_DIR .. "/../CVarBrowser.lua"
@@ -123,6 +124,9 @@ function g_methods:Enable() self._enabled = true end
 function g_methods:Disable() self._enabled = false end
 function g_methods:SetEnabled(enabled) self._enabled = enabled and true or false end
 function g_methods:IsEnabled() return self._enabled end
+function g_methods:SetPropagateKeyboardInput(propagate)
+    self._propagate = propagate
+end
 function g_methods:SetSize(w, h) self._w, self._h = w, h end
 function g_methods:SetWidth(w) self._w = w end
 function g_methods:SetHeight(h) self._h = h end
@@ -167,6 +171,7 @@ function g_methods:GetText() return self._text end
 function g_methods:GetStringWidth() return #self._text * 6.3 end
 function g_methods:GetUnboundedStringWidth() return #self._text * 6.3 end
 function g_methods:GetStringHeight() return 13 end
+function g_methods:SetColorTexture(r, g, b) self._color = { r, g, b } end
 function g_methods:GetNumLines() return 1 end
 function g_methods:GetFont() return "font", 12, "" end
 function g_methods:GetFrameLevel() return self._level end
@@ -181,7 +186,7 @@ function g_methods:ClearFocus()
 end
 function g_methods:HasFocus() return self._focused == true end
 function g_methods:HighlightText() self._highlighted = true end
-function g_methods:IsMouseOver() return false end
+function g_methods:IsMouseOver() return self._mouse_over == true end
 function g_methods:SetScrollChild(child) self._scroll_child = child end
 function g_methods:GetVerticalScroll() return self._scroll end
 function g_methods:GetVerticalScrollRange()
@@ -224,6 +229,9 @@ _G.C_Timer = {
     end,
 }
 _G.Enum = { ConsoleCommandType = { Cvar = 0, Command = 1 } }
+-- A fixed clock keeps change log times deterministic.
+_G.time = function() return 1763467200 end
+_G.date = os.date
 -- TOC metadata. The main load runs as a CI release build, and a second
 -- load at the end runs as a repository (dev) build.
 local g_metadata = { Version = "1.0.1", ["X-Build"] = "afaa9bd 2026-11-18" }
@@ -332,6 +340,17 @@ end
 local function slash(command)
     local ok, err = pcall(SlashCmdList.CVARBROWSER, command)
     check(ok, "slash '" .. command .. "' raised: " .. tostring(err))
+end
+
+-- Reads the selected CVar's name through the copy box, then closes it.
+local function selected_name()
+    g_last_focus = nil
+    slash("copy name")
+    local name = g_last_focus and g_last_focus._text
+    if g_last_focus then
+        fire_script(g_last_focus, "OnEscapePressed")
+    end
+    return name
 end
 
 -- Load -----------------------------------------------------------------------
@@ -469,9 +488,11 @@ do
         return w._kind == "ScrollFrame" and w._parent == g_frame
     end)._scroll_child
     local expected = math.floor(child._w / 2 - 44 - 16 + 0.5)
-    check(name_text and name_text._w == expected,
+    -- The name starts 16px later (after the favorite toggle) and still ends
+    -- 10px short of the gauge.
+    check(name_text and name_text._w == expected - 16,
         "name column reaches 10px short of the gauge: "
-            .. tostring(name_text and name_text._w) .. " vs " .. expected)
+            .. tostring(name_text and name_text._w) .. " vs " .. (expected - 16))
 
     local long_value = "a text value well past the old 28-character cap"
     local value_text = find_widget(function(w)
@@ -480,7 +501,8 @@ do
     end)
     check(value_text ~= nil, "unchanged row shows a long value in full")
     check(value_text and value_text._w == expected,
-        "value column mirrors the name column: " .. tostring(value_text and value_text._w))
+        "value column runs from the right edge to 10px short of the gauge: "
+            .. tostring(value_text and value_text._w))
 
     -- Gauge marks sit at whole-pixel offsets so they never straddle a pixel
     -- edge and render 0 or 2px thick while scrolling.
@@ -681,6 +703,246 @@ do
     fire_script(scroll_frame, "OnScrollRangeChanged", 0, grown)
     check(math.abs(scroll_frame._scroll - grown) < 1e-9,
         "list stays pinned to the bottom when the range grows")
+end
+
+-- Change log -----------------------------------------------------------------
+
+do
+    -- The set, undo, redo, and reset above each logged one change.
+    local log = CVarBrowserDB.log
+    local actions = {}
+    for _, change in ipairs(log) do
+        actions[#actions + 1] = change.action
+    end
+    check(table.concat(actions, ",") == "set,undo,redo,reset",
+        "set, undo, redo, and reset are logged in order: " .. table.concat(actions, ","))
+    check(log[1] and log[1].name == "cameraDistanceMaxZoomFactor"
+        and log[1].old == "1.9" and log[1].new == "2.6"
+        and log[1].time == 1763467200,
+        "a log entry keeps the name, old and new values, and time")
+
+    g_chat = {}
+    slash("log")
+    check(chat_has("4 of 4 logged changes"), "/cvars log lists every change")
+    check(chat_has("set cameraDistanceMaxZoomFactor: 1.9 %-> 2.6"),
+        "/cvars log prints the action, name, and both values")
+    g_chat = {}
+    slash("log 1")
+    check(chat_has("1 of 4 logged changes"), "/cvars log <count> limits the list")
+    g_chat = {}
+    slash("log CAMERADISTANCEMAXZOOMFACTOR")
+    check(chat_has("4 of 4 logged changes"), "/cvars log <name> matches any case")
+
+    -- The log keeps only the newest 200 entries.
+    for index = #log + 1, 200 do
+        log[index] = { name = "old", action = "set", old = "0", new = "1", time = 0 }
+    end
+    slash("extra7")
+    g_last_focus:SetText("8")
+    fire_script(g_last_focus, "OnEnterPressed")
+    check(#log == 200 and log[200].name == "extra7" and log[1].action == "undo",
+        "a full log drops its oldest entry")
+
+    g_chat = {}
+    slash("clearlog")
+    check(#CVarBrowserDB.log == 0 and chat_has("cleared 200 logged changes"),
+        "/cvars clearlog empties the log")
+end
+
+-- value: filter --------------------------------------------------------------
+
+do
+    -- extra7 is now 8, so exact 8 matches extra7 and extra8.
+    slash("value:=8")
+    check(g_count_text._text:match("^2 / 47") ~= nil,
+        "value:=8 matches values equal to 8: " .. g_count_text._text)
+    -- Substring 5 matches extra5, 15, 25, 35, and the bitfield shown as hex 35.
+    slash("value:5")
+    check(g_count_text._text:match("^5 / 47") ~= nil,
+        "value:5 matches values containing 5, bitfields as hex: " .. g_count_text._text)
+    slash("extra")
+end
+
+-- Favorites ------------------------------------------------------------------
+
+do
+    slash("fav extra30")
+    check(CVarBrowserDB.favorites.extra30 == true, "/cvars fav <name> saves a favorite")
+    slash("extra")
+    check(selected_name() == "extra30", "a favorite pins to the top of the list")
+    slash("sort name desc")
+    slash("extra")
+    check(selected_name() == "extra30", "a favorite stays on top in descending order")
+    slash("sort name asc")
+    slash("has:fav")
+    check(g_count_text._text:match("^1 / 47") ~= nil, "has:fav keeps only favorites")
+
+    slash("fav extra30")
+    check(CVarBrowserDB.favorites.extra30 == nil, "/cvars fav toggles a favorite off")
+    slash("extra")
+    check(selected_name() == "extra1", "an unpinned CVar returns to its sorted place")
+end
+
+-- Favorite toggle and row tooltip --------------------------------------------
+
+do
+    local function row_for(name)
+        return find_widget(function(w)
+            return w.favorite ~= nil and w.entry ~= nil and w.entry.name == name
+        end)
+    end
+    local function shown_texts(panel)
+        local texts = {}
+        for _, region in ipairs(panel._regions) do
+            if region._kind == "FontString" and region._shown then
+                texts[#texts + 1] = region._text
+            end
+        end
+        return table.concat(texts, "|")
+    end
+    local timers = {}
+    for _, widget in ipairs(g_widgets) do
+        if widget._kind == "Frame" and widget._parent == g_frame
+            and widget._scripts.OnUpdate then
+            timers[#timers + 1] = widget
+        end
+    end
+    check(#timers == 1, "one tooltip timer frame exists: " .. #timers)
+    local timer = timers[1]
+    local panel = g_frame.tooltip
+
+    slash("extra")
+    -- extra15 sits far enough below the selected extra1 that a stray select
+    -- on its pooled row (which shows extra14 after the pin) is caught.
+    local row = row_for("extra15")
+    check(row ~= nil, "rows have a favorite toggle")
+    check(row and not row.favorite.mark._shown,
+        "a plain row hides its favorite mark")
+    fire_script(row.favorite, "OnClick")
+    check(CVarBrowserDB.favorites.extra15 == true, "clicking the toggle saves a favorite")
+    check(find_widget(function(w)
+        return w._kind == "FontString" and w._text == "Added extra15 to favorites"
+    end) ~= nil, "clicking the toggle reports it in the status line")
+    check(selected_name() == "extra1", "clicking the toggle does not select the row")
+    row = row_for("extra15")
+    local mark = row and row.favorite.mark
+    check(mark and mark._shown and mark.interior[1]._shown
+        and mark.outline[1]._color[1] == 0.929412,
+        "a favorite shows a filled diamond in the text color")
+    row.favorite._mouse_over = true
+    fire_script(row.favorite, "OnEnter")
+    check(mark.outline[1]._color[1] == 0.717647, "the toggle under the pointer turns accent")
+    row.favorite._mouse_over = false
+    fire_script(row.favorite, "OnLeave")
+    fire_script(row.favorite, "OnClick")
+    check(CVarBrowserDB.favorites.extra15 == nil, "a second click removes the favorite")
+    g_frame.hide_tooltip()
+
+    row = row_for("extra20")
+    row._mouse_over = true
+    fire_script(row, "OnEnter")
+    check(not panel._shown, "the tooltip waits before it shows")
+    timer._scripts.OnUpdate(timer, 0.3)
+    check(not panel._shown, "the tooltip is still hidden after 0.3s")
+    timer._scripts.OnUpdate(timer, 0.3)
+    check(panel._shown, "the tooltip shows after 0.5s")
+    check(shown_texts(panel) == "extra20|Value: 20|Default: 0|Range [0, 100]",
+        "the tooltip lists name, value, default, and help: " .. shown_texts(panel))
+    local point, anchor, relative_point, x, y = panel:GetPoint(1)
+    check(point == "TOPLEFT" and anchor == row and relative_point == "BOTTOMLEFT"
+        and x == 14 and y == -4, "the tooltip hangs below the row, in line with the name")
+
+    row._mouse_over = false
+    fire_script(row, "OnLeave")
+    check(not panel._shown, "leaving the row hides the tooltip")
+    local next_row = row_for("extra21")
+    next_row._mouse_over = true
+    fire_script(next_row, "OnEnter")
+    check(panel._shown and shown_texts(panel):match("^extra21|") ~= nil,
+        "the next row shows at once right after a leave")
+
+    next_row._mouse_over = false
+    fire_script(next_row, "OnLeave")
+    timer._scripts.OnUpdate(timer, 0.2)
+    next_row._mouse_over = true
+    next_row.favorite._mouse_over = true
+    fire_script(next_row.favorite, "OnEnter")
+    check(not panel._shown, "after the grace period the next row waits again")
+    timer._scripts.OnUpdate(timer, 0.5)
+    check(shown_texts(panel) == "Add to favorites",
+        "the toggle's tooltip offers to add a favorite: " .. shown_texts(panel))
+
+    local scroll_frame = find_widget(function(w)
+        return w._kind == "ScrollFrame" and w._parent == g_frame
+    end)
+    fire_script(scroll_frame, "OnVerticalScroll", 0)
+    check(not panel._shown, "scrolling hides the tooltip")
+    next_row._mouse_over = false
+    next_row.favorite._mouse_over = false
+    g_frame.hide_tooltip()
+end
+
+-- Keyboard navigation --------------------------------------------------------
+
+do
+    local search_box = find_widget(function(w)
+        return w._kind == "EditBox" and w._scripts.OnKeyDown ~= nil
+    end)
+    local scroll_frame = find_widget(function(w)
+        return w._kind == "ScrollFrame" and w._parent == g_frame
+    end)
+
+    -- A 110px list shows 5 rows, so a page is 5 rows.
+    scroll_frame._h = 110
+    slash("extra")
+    fire_script(search_box, "OnKeyDown", "PAGEDOWN")
+    check(selected_name() == "extra14", "PageDown in the search box moves one page")
+    fire_script(search_box, "OnKeyDown", "END")
+    check(selected_name() == "extra14", "End in the search box stays with the caret")
+
+    g_frame._mouse_over = false
+    fire_script(g_frame, "OnKeyDown", "END")
+    check(selected_name() == "extra14" and g_frame._propagate == true,
+        "list keys pass through when the cursor is outside the window")
+    g_frame._mouse_over = true
+    fire_script(g_frame, "OnKeyDown", "END")
+    check(selected_name() == "extra9" and g_frame._propagate == false,
+        "End over the window selects the last row and keeps the key")
+    fire_script(g_frame, "OnKeyUp", "END")
+    check(g_frame._propagate == true, "key up passes keys through again")
+    -- Names sort as text, so five rows above extra9 is extra40.
+    fire_script(g_frame, "OnKeyDown", "PAGEUP")
+    check(selected_name() == "extra40", "PageUp over the window moves one page")
+    fire_script(g_frame, "OnKeyDown", "HOME")
+    check(selected_name() == "extra1", "Home over the window selects the first row")
+    fire_script(g_frame, "OnKeyDown", "W")
+    check(g_frame._propagate == true, "other keys pass through to the game")
+
+    g_in_combat = true
+    fire_script(g_frame, "OnKeyDown", "END")
+    check(selected_name() == "extra1" and g_frame._propagate == true,
+        "list keys do nothing in combat")
+    g_in_combat = false
+
+    fire_script(g_frame, "OnKeyDown", "ESCAPE")
+    check(search_box._text == "" and g_frame._propagate == false,
+        "Escape clears the search before it closes the window")
+    fire_script(g_frame, "OnKeyUp", "ESCAPE")
+    fire_script(g_frame, "OnKeyDown", "ESCAPE")
+    check(g_frame._propagate == true, "Escape with an empty search passes through")
+    fire_script(g_frame, "OnKeyUp", "ESCAPE")
+
+    search_box:SetText("extra")
+    search_box:SetFocus()
+    fire_script(search_box, "OnEscapePressed")
+    check(search_box._text == "" and search_box._focused,
+        "the first Escape in the search box clears its text")
+    fire_script(search_box, "OnEscapePressed")
+    check(not search_box._focused, "the second Escape leaves the search box")
+
+    g_frame._mouse_over = false
+    scroll_frame._h = 340
+    slash("extra")
 end
 
 -- Size switch ----------------------------------------------------------------
