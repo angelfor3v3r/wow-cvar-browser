@@ -276,10 +276,10 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 .size-menu {
   display: inline-flex; align-items: center; justify-content: flex-start;
   /* Title-bar meta chrome uses the fixed meta size and nowrap, so the label
-     never wraps. The fit is snug, with the label 4px from the box's left
-     edge. The minimum is 72x24, and the box grows with the label at larger
-     text sizes. */
-  min-width: 72px; height: 24px; padding: 0 4px;
+     never wraps. Width is exactly label + 8 (runtime update_scale_button):
+     3px padding inside the 1px border puts the label 4px from each outer
+     edge. No minimum width; the right edge stays put at the anchor. */
+  height: 24px; padding: 0 3px;
   white-space: nowrap;
   font-family: var(--font-ui); font-size: var(--small-size);
   border: 1px solid var(--border); background: var(--surface); color: var(--muted);
@@ -351,10 +351,12 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 }
 
 /* Chips put the icon 4px from the left edge and the label at x=18 (icon +
-   4px gap), with 6px right padding. Width fits the label above the minimum. */
+   4px gap), with 6px right padding (runtime fit_chip: 18 + label + 6).
+   Padding sits inside the 1px border, so 3px and 5px measure 4px and 6px
+   from the outer edges. Width fits the label above the minimum. */
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
-  height: 26px; padding: 0 6px 0 4px;
+  height: 26px; padding: 0 5px 0 3px;
   background: var(--surface); border: 1px solid var(--border);
   color: var(--muted); cursor: pointer;
   font-family: var(--font-ui); font-size: var(--small-size); white-space: nowrap;
@@ -371,18 +373,21 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round;
 }
 #filter-chip .chip-icon { width: 10px; height: 9px; fill: currentColor; stroke: none; }
-.chip-count { color: var(--text); }
+/* Filters/Sort chip text is one run with ordinary spaces ("Filters off",
+   "Sort name asc"), in `text` at rest; the icon is `muted` at rest. Active
+   turns the whole run, the icon, and the border `accent` (runtime
+   set_chip_active). Hover changes only the fill and border. */
+.chip .chip-label { color: var(--text); }
+.chip .chip-icon { color: var(--muted); }
 .chip[aria-expanded="true"], .btn[aria-expanded="true"] {
   background: var(--surface-hover); border-color: var(--accent); color: var(--text);
 }
-/* An active (non-default) filter or sort gets an accent border and accent
-   summary. The chip itself is the active-filter summary, so it carries no
-   muted "Filters" label. */
+/* An active (non-default) filter or sort chip is the active-filter summary:
+   accent border, accent text, accent icon. */
 .chip.active {
   border-color: var(--accent);
-  color: var(--text);
 }
-.chip.active .chip-count { color: var(--accent); }
+.chip.active .chip-label, .chip.active .chip-icon { color: var(--accent); }
 /* The pressed regex toggle gets an accent underline instead of a fill,
    because it is a mode of the search box and not a filter. */
 .regex-chip { padding: 0 7px; letter-spacing: .04em; }
@@ -398,13 +403,13 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 /* The control row is one 26px band, so its buttons match the chips instead
    of the 30px detail-row buttons. */
 .toolbar-controls .btn {
-  height: 26px; padding: 0 4px;
+  height: 26px; padding: 0 3px;
   font-size: var(--small-size);
 }
 #copy-button { min-width: 30px; }
 
 .toolbar-controls .icon-btn {
-  min-width: 24px; height: 26px; padding: 0 4px;
+  min-width: 24px; height: 26px; padding: 0 3px;
   display: inline-flex; align-items: center; justify-content: center;
 }
 /* Undo/redo arrows are drawn marks because a font glyph's ink center moves
@@ -478,7 +483,7 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 }
 .menu-clear {
   margin-left: auto;
-  min-width: 40px; height: 20px; padding: 0 4px;
+  min-width: 40px; height: 20px; padding: 0 3px;
   background: transparent; border: 1px solid var(--border);
   color: var(--muted); cursor: pointer;
   font-family: var(--font-ui); font-size: var(--small-size);
@@ -717,8 +722,11 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   color: var(--text); font-family: var(--font-data); font-size: var(--body-size);
 }
 .value-field input:disabled { color: var(--muted); opacity: .72; cursor: default; }
+/* Snug text buttons (runtime fit_text_button): label + 8 wide above each
+   control's floor. 3px padding inside the 1px border puts the label 4px
+   from each outer edge. */
 .btn {
-  height: 30px; padding: 0 4px;
+  height: 30px; padding: 0 3px;
   background: var(--surface); border: 1px solid var(--border);
   color: var(--text); cursor: pointer; font-family: var(--font-ui);
   font-size: var(--body-size); white-space: nowrap;

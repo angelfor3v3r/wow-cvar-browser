@@ -2883,7 +2883,9 @@ local function update_scale_button()
         label = preset_key:sub(1, 1):upper() .. preset_key:sub(2)
     end
     g_scale_button.label:SetText("Size: " .. label)
-    g_scale_button:SetWidth(max(72, round(g_scale_button.label:GetStringWidth() + 10)))
+    -- Snug fit with 4px of padding on each side, like the other text
+    -- buttons.
+    g_scale_button:SetWidth(round(g_scale_button.label:GetStringWidth() + 8))
     for _, row in ipairs(g_scale_rows) do
         if row.option.value == preset_key then
             row.label:SetTextColor(
@@ -3181,7 +3183,6 @@ local function set_layout(value)
     if g_db then
         g_db.preset = value
     end
-    apply_ui_scale()
     g_scale_popup:Hide()
 end
 
@@ -4282,12 +4283,28 @@ g_close_button:SetScript("OnClick", function()
     g_frame:Hide()
 end)
 
+-- Re-lays out the window after a size or screen change. The client only
+-- recomputes frame rects for the new size on its next layout pass, so the
+-- pixel snapping in the same frame measured stale rects and left parts off
+-- the grid (picking the same size again fixed it). A second pass on the
+-- next frame snaps against the settled rects. Rows redraw both times
+-- because the gauge glyph offsets depend on the font size.
+local function relayout()
+    apply_ui_scale()
+    update_rows()
+    C_Timer.After(0, function()
+        if g_frame:IsShown() then
+            apply_ui_scale()
+            update_rows()
+        end
+    end)
+end
+
 g_scale_button:SetScript("OnClick", toggle_scale_popup)
 for _, row in ipairs(g_scale_rows) do
     row:SetScript("OnClick", function(self)
         set_layout(self.option.value)
-        -- Gauge glyph offsets depend on the font size, so redraw the rows.
-        update_rows()
+        relayout()
     end)
 end
 
@@ -4500,8 +4517,7 @@ g_frame:SetScript("OnEvent", function(self, event, argument)
         update_controls()
     elseif event == "UI_SCALE_CHANGED"
         or event == "DISPLAY_SIZE_CHANGED" then
-        apply_ui_scale()
-        update_rows()
+        relayout()
     elseif event == "PLAYER_ENTERING_WORLD" then
         if self:IsShown() then
             rescan()

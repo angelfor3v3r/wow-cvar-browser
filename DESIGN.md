@@ -101,9 +101,9 @@ figures so columns scan cleanly.
 4 / 8 / 12 / 16 / 24px. Window 800×600 / 920×680 / 1040×760 — Compact /
 Standard / Large; the mockup renders the Standard reference at 920×680.
 Buttons are snug: 4px label padding on each side with per-control floor
-widths — Set 30, Reset to default 64, Copy 30, Clear all 40, Size 72,
-close 24, undo/redo 24 — and the floor only applies below the label's
-natural width.
+widths — Set 30, Reset to default 64, Copy 30, Clear all 40, close 24,
+undo/redo 24 — and the floor only applies below the label's natural width.
+The title-bar Size box has no floor: it is always label width + 8.
 
 ## Size presets
 
@@ -188,12 +188,13 @@ across rows. Domain is the union of help and observed bounds.
 
 - **Root**: `BackdropTemplate`, 1px border, `DIALOG` strata, movable, clamped.
 - **Title bar**: 44px drag region; title, subtitle, boxed `Size` menu button
-  (snug: the label sits 4px from the box's left edge, 72×24px minimum, 1px
-  `border`, `surface` fill, muted, 12px gap before the close, custom `×`
-  close fitted to 24×28px). The box label is title-bar meta — `Size: Auto`
-  or `Size: <preset>` — pinned to the meta size (11px at Standard) with
-  nowrap, and the box grows with its label at larger text sizes so the label
-  stays on one line at every size. Hover or open state raises the box to
+  (exactly `round(label width + 8)` × 24px — the label 4px from each edge,
+  no minimum width — 1px `border`, `surface` fill, muted, its right edge
+  12px before the close, custom `×` close fitted to 24×28px). The box label
+  is title-bar meta — `Size: Auto` or `Size: <preset>` — pinned to the meta
+  size (11px at Standard) with nowrap; the box tracks its label at every
+  text size, so the label stays on one line and the right edge holds still
+  while the box grows or shrinks leftward. Hover or open state raises the box to
   `surface_hover` with an accent border and primary text. Click opens the
   size menu: a 126px popup right-aligned under the box, 22px rows Auto /
   Compact / Standard / Large. The current preset is accent text behind a 2px
@@ -225,10 +226,12 @@ across rows. Domain is the union of help and observed bounds.
   `border`, square corners, 11px labels; hover raises to `surface_hover` +
   accent border.
   - **Filters chip**: 10×9 funnel glyph at 4px from the chip's left edge +
-    `Filters` label at x=18 (icon + 4px gap) + summary slot; the chip fits
-    its label with 6px right padding, 80px minimum. Summary slot reads `off`
-    (muted) at rest or the active-filter count in accent when
-    filters are on; the whole chip then takes the accent border. Tooltip
+    one label string at x=18 (icon + 4px gap): `Filters off` at rest,
+    `Filters <count>` (e.g. `Filters 2`) when filters are on — a single
+    text run with an ordinary space, no separate summary slot. Width is
+    `18 + label + 6` (6px right padding), 80px minimum. The label is `text`
+    and the glyph `muted` at rest; with filters on, label, glyph, and border
+    all turn accent. Hover raises only the fill and border. Tooltip
     lists the active facets as `scope:account, has:changed`. Click opens the
     filter menu below the chip.
   - **Filter menu**: popup panel (`surface`, 1px border, no radius),
@@ -254,11 +257,13 @@ across rows. Domain is the union of help and observed bounds.
     at 13/14/15/16 text sizes: the Has group always ends up behind the same
     ~150px of scroll and every row is reachable in all cases. Opening upward
     is not an option — the control row sits near the window's top edge.
-  - **Sort chip**: 10×10 sort glyph at 4px from the chip's left edge +
-    `Sort` label at x=18 (icon + 4px gap) + current sort, e.g. `name asc`,
-    shown in accent text when the sort is not the default (name asc), with
-    an accent border; the chip fits its label with 6px right padding, 100px
-    minimum. Click opens the sort menu: Name, Type, Scope,
+  - **Sort chip**: 10×10 sort glyph at 4px from the chip's left edge + one
+    label string at x=18 (icon + 4px gap): `Sort <key> <dir>`, e.g.
+    `Sort name asc` or `Sort changed desc`, a single text run with ordinary
+    spaces. Width is `18 + label + 6`, 100px minimum. Colors follow the
+    Filters chip: `text` label and `muted` glyph at the default sort (name
+    asc); label, glyph, and border accent otherwise. Click opens the sort
+    menu: Name, Type, Scope,
     Category, Changed, Range width — the six keys of `/cvars sort`. The
     active row is ticked and its direction shown in a muted trailing note.
   - **Undo / Redo**: two snug icon buttons (24×26px minimum) carrying the
@@ -390,8 +395,8 @@ across rows. Domain is the union of help and observed bounds.
 | Secure | meta `Secure: locked in combat` in warning, in and out of combat |
 | Secure in combat | Set/Reset disabled; warning status |
 | Selected changed row | accent selection bar; changed name stays changed lilac |
-| Filters active | Filters chip accent border; count in accent; tooltip lists facets |
-| Sort non-default | Sort chip accent border; sort summary in accent |
+| Filters active | Filters chip label `Filters N`, glyph, and border in accent; tooltip lists facets |
+| Sort non-default | Sort chip label, glyph, and border in accent |
 | Regex on | `.*` chip accent text/border with accent bottom underline |
 | Undo/redo unavailable | icon button at 38% opacity, no hover, no click |
 | Copy unavailable | Copy button disabled (no selection) |
@@ -505,8 +510,8 @@ blocks local font loading from file URLs). Controls:
   the window to a known base first and noting the change in the status line
   (which auto-clears after 30s like every status message):
   - *Active filters*: `scope:account, type:number, has:changed` set in the
-    filter menu; the Filters chip shows `3` in accent.
-  - *Active sort*: `changed desc` in the sort chip.
+    filter menu; the Filters chip reads `Filters 3` in accent.
+  - *Active sort*: the sort chip reads `Sort changed desc` in accent.
   - *Undo & redo disabled*: edit history cleared; both icon buttons dimmed.
   - *Copy disabled*: an unmatched search empties the list — empty state
     line, count `0 / N CVars`, Copy disabled, detail cleared.

@@ -411,7 +411,7 @@ const resetButtonEl = document.getElementById("reset-button");
 const statusEl = document.getElementById("status");
 const regexChipEl = document.getElementById("regex-chip");
 const filterChipEl = document.getElementById("filter-chip");
-const filterCountEl = document.getElementById("filter-count");
+const filterLabelEl = document.getElementById("filter-label");
 const filterMenuEl = document.getElementById("filter-menu");
 const sortChipEl = document.getElementById("sort-chip");
 const sortLabelEl = document.getElementById("sort-label");
@@ -1116,12 +1116,13 @@ function redo() {
 
 function renderControls() {
   const filterCount = activeFilterCount();
-  filterCountEl.textContent = filterCount ? String(filterCount) : "off";
+  // One text run with ordinary spaces, as the runtime's update_filter_chip.
+  filterLabelEl.textContent = filterCount ? `Filters ${filterCount}` : "Filters off";
   filterChipEl.classList.toggle("active", filterCount > 0);
   filterChipEl.title = filterCount ? `Active filters: ${filterSummary()}` : "No active filters";
 
   const sortActive = state.sort.key !== "name" || state.sort.dir !== "asc";
-  sortLabelEl.textContent = `${state.sort.key} ${state.sort.dir}`;
+  sortLabelEl.textContent = `Sort ${state.sort.key} ${state.sort.dir}`;
   sortChipEl.classList.toggle("active", sortActive);
 
   regexChipEl.setAttribute("aria-pressed", String(state.regex));

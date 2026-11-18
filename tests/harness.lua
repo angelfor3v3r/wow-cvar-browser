@@ -217,7 +217,12 @@ _G.GetCursorPosition = function() return g_cursor_x, g_cursor_y end
 _G.GetPhysicalScreenSize = function() return PHYSICAL_WIDTH, PHYSICAL_HEIGHT end
 local g_mouse_down = true
 _G.IsMouseButtonDown = function() return g_mouse_down end
-_G.C_Timer = { After = function() end }
+local g_timers = {}
+_G.C_Timer = {
+    After = function(delay, callback)
+        g_timers[#g_timers + 1] = { delay = delay, callback = callback }
+    end,
+}
 _G.Enum = { ConsoleCommandType = { Cvar = 0, Command = 1 } }
 _G.unpack = _G.unpack or table.unpack
 
@@ -667,6 +672,38 @@ do
     fire_script(scroll_frame, "OnScrollRangeChanged", 0, grown)
     check(math.abs(scroll_frame._scroll - grown) < 1e-9,
         "list stays pinned to the bottom when the range grows")
+end
+
+-- Size switch ----------------------------------------------------------------
+
+do
+    local large_row = find_widget(function(w)
+        return w.option and w.option.value == "large"
+    end)
+    check(large_row ~= nil, "Size menu has a Large row")
+    for index = #g_timers, 1, -1 do
+        g_timers[index] = nil
+    end
+    fire_script(large_row, "OnClick", "LeftButton")
+    local deferred = nil
+    for _, timer in ipairs(g_timers) do
+        if timer.delay == 0 then
+            deferred = timer.callback
+        end
+    end
+    check(deferred ~= nil, "a size change schedules a second layout pass")
+    if deferred then
+        local ok, err = pcall(deferred)
+        check(ok, "the second layout pass runs: " .. tostring(err))
+    end
+
+    -- The Size button fits its label with 4px of padding on each side
+    -- (within a unit, since the stubs snap at 1.875 px per unit).
+    local size_button = button_with_label("Size: Large")
+    local snug = #"Size: Large" * 6.3 + 8
+    check(size_button and math.abs(size_button._w - snug) < 1,
+        "the Size button is a snug fit: " .. tostring(size_button and size_button._w))
+    CVarBrowserDB.preset = "auto"
 end
 
 -- Pixel-locked window drag ---------------------------------------------------
