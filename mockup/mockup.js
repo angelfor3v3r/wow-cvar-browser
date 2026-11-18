@@ -89,6 +89,14 @@ const PRESETS = [
   { value: "large", label: "Large" },
 ];
 
+/* TOC metadata the runtime reads through C_AddOns.GetAddOnMetadata. CI
+   stamps release builds with Version and X-Build ("<hash> <YYYY-MM-DD>");
+   a repository copy carries Version "dev" and no X-Build. */
+const BUILDS = {
+  release: { version: "1.0.0", xBuild: "afaa9bd 2026-11-18" },
+  dev: { version: "dev", xBuild: null },
+};
+
 const DEFAULTS = {
   palette: "grim",
   font: "noto",
@@ -96,6 +104,7 @@ const DEFAULTS = {
   scale: 13,
   preset: "auto",
   smooth: true,
+  build: "release",
 };
 
 const CVARS = [
@@ -382,6 +391,7 @@ const state = {
   scale: DEFAULTS.scale,
   preset: DEFAULTS.preset,
   smooth: DEFAULTS.smooth,
+  build: DEFAULTS.build,
 };
 
 const history = { undo: [], redo: [] };
@@ -425,6 +435,8 @@ const copyBoxInputEl = document.getElementById("copy-box-input");
 const sizeButtonEl = document.getElementById("size-button");
 const sizeMenuEl = document.getElementById("size-menu");
 const scenariosEl = document.getElementById("scenarios");
+const buildSwitchEl = document.getElementById("build-switch");
+const subtitleEl = document.getElementById("subtitle");
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -1438,6 +1450,28 @@ function applyPreset(value) {
   updateSelection();
 }
 
+// Mirrors the runtime subtitle rule in DESIGN.md (Title bar).
+function subtitleText({ version, xBuild }) {
+  const raw = (version ?? "").trim();
+  if (raw === "" || raw.toLowerCase() === "dev") {
+    return "WoW Forever · dev";
+  }
+  const parts = ["WoW Forever", `v${raw.replace(/^v/i, "")}`];
+  const token = (xBuild ?? "").trim().split(/\s+/)[0];
+  if (/^[0-9a-f]+$/i.test(token)) {
+    parts.push(token);
+  }
+  return parts.join(" · ");
+}
+
+function applyBuild(value) {
+  state.build = value in BUILDS ? value : DEFAULTS.build;
+  subtitleEl.textContent = subtitleText(BUILDS[state.build]);
+  for (const button of buildSwitchEl.querySelectorAll("button")) {
+    button.classList.toggle("active", button.dataset.build === state.build);
+  }
+}
+
 function updateSelection() {
   const palette = PALETTES[state.palette];
   const font = FONTS[state.font];
@@ -1462,6 +1496,7 @@ function saveState() {
         scale: state.scale,
         preset: state.preset,
         smooth: state.smooth,
+        build: state.build,
       }),
     );
   } catch {
@@ -1484,6 +1519,7 @@ function loadState() {
       state.preset = saved.preset;
     }
     if (typeof saved.smooth === "boolean") state.smooth = saved.smooth;
+    if (saved.build in BUILDS) state.build = saved.build;
   } catch {
     // Ignore corrupt storage.
   }
@@ -1501,6 +1537,7 @@ function resetOptions() {
   applyFonts();
   applyScale(state.scale);
   applyPreset(state.preset);
+  applyBuild(DEFAULTS.build);
   saveState();
 }
 
@@ -1671,6 +1708,15 @@ scaleSwitchEl.addEventListener("click", (event) => {
     return;
   }
   applyScale(Number(button.dataset.scale));
+  saveState();
+});
+
+buildSwitchEl.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-build]");
+  if (!button) {
+    return;
+  }
+  applyBuild(button.dataset.build);
   saveState();
 });
 
@@ -1851,4 +1897,5 @@ applyPalette(state.palette);
 applyFonts();
 applyScale(state.scale);
 applyPreset(state.preset);
+applyBuild(state.build);
 render();

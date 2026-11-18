@@ -44,6 +44,12 @@ jobs:
           LUAC: luac5.1
         run: lua5.1 tests/harness.lua
 
+      - name: Repository TOC is a dev build
+        # Release zips get the real version from the tag. The checked-in TOC
+        # stays "dev" so a copy of the repository is never mistaken for one.
+        run: |
+          grep -qx '## Version: dev' CVarBrowser.toc
+
   release:
     needs: test
     if: startsWith(github.ref, 'refs/tags/')
@@ -63,9 +69,14 @@ jobs:
           root="dist/CVarBrowser"
           mkdir -p "$root/Media"
           cp CVarBrowser.lua README.md "$root/"
-          # Stamp the tag's version into the shipped TOC, and prove it took.
-          sed "s/^## Version:.*/## Version: $version/" CVarBrowser.toc > "$root/CVarBrowser.toc"
+          # Stamp the tag's version and the build (short commit hash and
+          # commit date) into the shipped TOC, and prove it took. The window
+          # subtitle shows "v<version> · <hash>" from these two fields.
+          build="${GITHUB_SHA::7} $(git log -1 --format=%cs)"
+          sed "s/^## Version:.*/## Version: $version\n## X-Build: $build/" \
+            CVarBrowser.toc > "$root/CVarBrowser.toc"
           grep -qx "## Version: $version" "$root/CVarBrowser.toc"
+          grep -qx "## X-Build: $build" "$root/CVarBrowser.toc"
           # Ship only the fonts the addon loads (MEDIA_PATH .. "<file>").
           mapfile -t fonts < <(grep -o 'MEDIA_PATH \.\. "[^"]*"' CVarBrowser.lua | sed 's/.*"\(.*\)"/\1/' | sort -u)
           (( ${#fonts[@]} > 0 ))

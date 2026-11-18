@@ -129,7 +129,7 @@ label and menu selection only.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
-│  CVar Browser   WoW Forever                       [Size: Auto]   ×   │
+│  CVar Browser   WoW Forever · v1.0.0 · afaa9bd    [Size: Auto]   ×   │
 ├──────────────────────────────────────────────────────────────────────┤
 │  [ Search CVars... ] [.*] [ ] Changed only   21 / 21 CVars, 7 range  │
 │  [Filters 2][Sort changed] [↩][↪] [Copy]                             │
@@ -187,7 +187,7 @@ across rows. Domain is the union of help and observed bounds.
 ## Components
 
 - **Root**: `BackdropTemplate`, 1px border, `DIALOG` strata, movable, clamped.
-- **Title bar**: 44px drag region; title, subtitle, boxed `Size` menu button
+- **Title bar**: 44px drag region; title, subtitle (see Subtitle), boxed `Size` menu button
   (exactly `round(label width + 8)` × 24px — the label 4px from each edge,
   no minimum width — 1px `border`, `surface` fill, muted, its right edge
   12px before the close, custom `×` close fitted to 24×28px). The box label
@@ -200,6 +200,38 @@ across rows. Domain is the union of help and observed bounds.
   Compact / Standard / Large. The current preset is accent text behind a 2px
   accent left bar — the selected-row language, not a tick. Picking a preset
   applies it and closes the menu; Escape or an outside click closes it too.
+- **Subtitle**: the existing title-bar FontString — `FONT_META`,
+  `COLORS.muted`, `LEFT` on the title's `RIGHT` at (+12, 0), justify-V
+  middle, nowrap, natural width — now carries the addon version. Only its
+  text changes; font, colour, anchor, and offsets are unchanged, and it has
+  no tooltip or hover state. The separator is a middle dot with one space
+  each side, `" · "` (Lua `" \194\183 "`, U+00B7). The text comes from
+  `C_AddOns.GetAddOnMetadata(addonName, "Version")` and `"X-Build"`,
+  each trimmed of surrounding whitespace:
+  - **Release** (CI-stamped TOC, e.g. `## Version: 1.0.0`, `## X-Build:
+    afaa9bd 2026-11-18`): `WoW Forever · v<version> · <hash>` →
+    `WoW Forever · v1.0.0 · afaa9bd`. `<version>` is the TOC value with one
+    leading `v`/`V` stripped, so it never reads `vv`. `<hash>` is X-Build's
+    first whitespace-delimited token, used as-is (CI writes 7 lowercase hex
+    characters). The build date is not shown.
+  - **Dev** (Version missing, empty, or `dev` in any case — the repository
+    TOC): `WoW Forever · dev`.
+  - **Release without a usable hash** (X-Build missing, or its first token
+    is not all hex): `WoW Forever · v<version>`, no trailing separator.
+
+  Truncation: none. The visible content is bounded (semver plus 7 hex), so
+  the subtitle stays on one line at its natural width at every preset with
+  wide clearance before the Size box (approximate Noto Sans widths in
+  title-bar pixels; clearance is subtitle right edge to Size box left edge):
+
+  | Preset | Meta size | Subtitle span (release) | Size box left | Clearance |
+  | --- | --- | --- | --- | --- |
+  | Compact | 10 | ≈163–296 | ≈670 | ≈370px |
+  | Standard | 11 | ≈176–322 | ≈783 | ≈460px |
+  | Large | 12 | ≈194–354 | ≈896 | ≈540px |
+
+  The subtitle is set once at load (metadata does not change in a session);
+  a preset change only re-renders it at the new meta size.
 - **Search**: custom dark edit box, accent focus border, placeholder. The
   magnifier is 14×14 at 4px from the box's left edge, vertically centered;
   the caret and text start at x=22 (icon right edge + 4px gap). The
@@ -505,6 +537,11 @@ blocks local font loading from file URLs). Controls:
   with the selected preset marked in accent behind the accent left bar. The
   mockup stays at the 920×680 Standard reference — it does not re-render the
   Compact or Large layouts.
+- Build: Release 1.0.0 (default) / Dev. It feeds the subtitle rule the TOC
+  metadata a build carries — release is `Version: 1.0.0`, `X-Build: afaa9bd
+  2026-11-18`, rendering `WoW Forever · v1.0.0 · afaa9bd`; dev is
+  `Version: dev` with no X-Build, rendering `WoW Forever · dev`. Reset
+  returns to Release.
 - 8px grid overlay and Reset.
 - **States** scenario bar — one click per acceptance state, each resetting
   the window to a known base first and noting the change in the status line

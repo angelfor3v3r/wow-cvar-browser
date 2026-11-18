@@ -1035,12 +1035,24 @@ do
     local title = make_text(g_titlebar, FONT_TITLE, "CVar Browser", COLORS.text)
     title:SetPoint("LEFT", g_titlebar, "LEFT", 39, 0)
 
-    local subtitle = make_text(
-        g_titlebar,
-        FONT_META,
-        "WoW Forever",
-        COLORS.muted
-    )
+    -- The subtitle carries the build. Release zips have the TOC Version and
+    -- X-Build ("<hash> <date>") stamped by CI, giving "WoW Forever · v1.0.1
+    -- · afaa9bd". A copy of the repository says "dev" instead. The rules
+    -- follow DESIGN.md (Subtitle).
+    local get_metadata = (C_AddOns and C_AddOns.GetAddOnMetadata)
+        or GetAddOnMetadata
+    local version = trim(get_metadata and get_metadata(g_addon_name, "Version"))
+    local build = trim(get_metadata and get_metadata(g_addon_name, "X-Build"))
+    local subtitle_text = "WoW Forever · dev"
+    if version ~= "" and version:lower() ~= "dev" then
+        subtitle_text = "WoW Forever · v" .. version:gsub("^[vV]", "")
+        local hash = build:match("^(%S+)")
+        if hash and hash:match("^%x+$") then
+            subtitle_text = subtitle_text .. " · " .. hash
+        end
+    end
+
+    local subtitle = make_text(g_titlebar, FONT_META, subtitle_text, COLORS.muted)
     subtitle:SetPoint("LEFT", title, "RIGHT", 12, 0)
     subtitle:SetJustifyV("MIDDLE")
 end

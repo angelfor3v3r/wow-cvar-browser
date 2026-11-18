@@ -224,6 +224,12 @@ _G.C_Timer = {
     end,
 }
 _G.Enum = { ConsoleCommandType = { Cvar = 0, Command = 1 } }
+-- TOC metadata. The main load runs as a CI release build, and a second
+-- load at the end runs as a repository (dev) build.
+local g_metadata = { Version = "1.0.1", ["X-Build"] = "afaa9bd 2026-11-18" }
+_G.C_AddOns = {
+    GetAddOnMetadata = function(_, field) return g_metadata[field] end,
+}
 _G.unpack = _G.unpack or table.unpack
 
 -- CVar store. GetCVarInfo returns values in the order verified in game
@@ -343,6 +349,9 @@ end
 local g_frame = _G.CVarBrowserFrame
 check(g_frame ~= nil, "CVarBrowserFrame global exists")
 check(type(SlashCmdList.CVARBROWSER) == "function", "slash handler registered")
+check(find_widget(function(w)
+    return w._kind == "FontString" and w._text == "WoW Forever · v1.0.1 · afaa9bd"
+end) ~= nil, "a release build shows its version and hash in the subtitle")
 
 local function fire(event, ...)
     local ok, err = pcall(g_frame._scripts.OnEvent, g_frame, event, ...)
@@ -774,6 +783,17 @@ do
             end
         end
     end
+end
+
+-- Repository build -------------------------------------------------------------
+
+do
+    g_metadata = { Version = "dev" }
+    local ok, err = pcall(assert(loadfile(ADDON_PATH)), "CVarBrowser", {})
+    check(ok, "dev build loads: " .. tostring(err))
+    check(find_widget(function(w)
+        return w._kind == "FontString" and w._text == "WoW Forever · dev"
+    end) ~= nil, "a repository build says dev in the subtitle")
 end
 
 -- Main-chunk register headroom (Lua 5.1 caps active locals at 200) -----------

@@ -73,6 +73,14 @@
         </div>
       </div>
 
+      <div class="control">
+        <span class="control-label">Build</span>
+        <div class="scale" id="build-switch">
+          <button type="button" data-build="release" class="active">Release 1.0.0</button>
+          <button type="button" data-build="dev">Dev</button>
+        </div>
+      </div>
+
       <label class="toggle"><input type="checkbox" id="smooth-toggle" checked><span>Smooth scroll</span></label>
       <label class="toggle"><input type="checkbox" id="grid-toggle"><span>8px grid</span></label>
       <button type="button" id="reset" class="reset">Reset</button>
@@ -98,7 +106,7 @@
         <span class="brand-bar"></span>
         <div class="brand-text">
           <h2>CVar Browser</h2>
-          <span>WoW Forever</span>
+          <span id="subtitle">WoW Forever · v1.0.0 · afaa9bd</span>
         </div>
         <div class="menu-anchor size-anchor">
           <button type="button" class="size-menu" id="size-button" aria-haspopup="true" aria-expanded="false">Size: Auto</button>

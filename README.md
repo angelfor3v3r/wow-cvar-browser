@@ -75,4 +75,6 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Tags must be `vMAJOR.MINOR.PATCH` with no leading zeros. Once the tests pass, CI writes the version into the TOC, builds `CVarBrowser-<version>.zip`, and publishes a GitHub release with generated notes. The zip has a single `CVarBrowser/` folder holding the TOC, `CVarBrowser.lua`, `README.md`, and only the fonts the addon loads from `Media/`. Releases are immutable once published, and `v*` tags can't be moved or deleted.
+Tags must be `vMAJOR.MINOR.PATCH` with no leading zeros. Once the tests pass, CI writes the version and an `X-Build` line (short commit hash and commit date) into the TOC, builds `CVarBrowser-<version>.zip`, and publishes a GitHub release with generated notes. The zip has a single `CVarBrowser/` folder holding the TOC, `CVarBrowser.lua`, `README.md`, and only the fonts the addon loads from `Media/`. Releases are immutable once published, so a tag name can't be reused even after its release is deleted, and `v*` tags can't be moved.
+
+The checked-in TOC always says `## Version: dev` (CI checks this). The window's subtitle shows `WoW Forever · v1.0.1 · afaa9bd` for a release build and `WoW Forever · dev` for a copy of the repository.

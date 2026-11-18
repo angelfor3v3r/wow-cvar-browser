@@ -81,9 +81,13 @@
 - `.github/workflows/ci.yml` tests on push and pull request. A
   `vMAJOR.MINOR.PATCH` tag (no leading zeros) also packages
   `CVarBrowser-<version>.zip` and publishes an immutable GitHub release. The
-  zip holds one `CVarBrowser/` folder with the TOC (version stamped from the
-  tag), `CVarBrowser.lua`, `README.md`, and only the fonts the Lua loads via
-  `MEDIA_PATH .. "<file>"`. Change the Package and Verify steps together.
+  zip holds one `CVarBrowser/` folder with the TOC (`## Version` from the
+  tag plus `## X-Build: <hash> <date>`), `CVarBrowser.lua`, `README.md`, and
+  only the fonts the Lua loads via `MEDIA_PATH .. "<file>"`. Change the
+  Package and Verify steps together. The checked-in TOC stays
+  `## Version: dev` (CI enforces it); the title-bar subtitle shows the build
+  per DESIGN.md. Immutable release tags can never be reused, even after the
+  release is deleted.
 - The repository only allows GitHub-owned actions, pinned to a full commit
   SHA with a `# vX.Y.Z` comment. A third-party action needs an allowlist
   change in repository settings first. Dependabot bumps the pins weekly.
