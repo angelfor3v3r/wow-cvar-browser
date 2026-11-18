@@ -438,12 +438,12 @@ function isChanged(cvar) {
   return cvar.value !== cvar.def;
 }
 
-// Runtime BITFIELD_CVARS: binary CVars known by name.
+// Binary CVars known by name (runtime BITFIELD_CVARS).
 const BITFIELD_CVARS = new Set(["closedInfoFrames"]);
 
-/* Binary kind, as the runtime's read_cvar_value flags it: bitfields by name,
-   serialized when the value holds a control or high byte. Values are byte
-   strings, one char per byte, like Lua strings. */
+/* Binary kind as the runtime's read_cvar_value flags it. Bitfields match by
+   name, and a value holding a control or high byte is serialized. Values are
+   byte strings with one char per byte, like Lua strings. */
 function binaryKind(cvar) {
   if (BITFIELD_CVARS.has(cvar.name)) {
     return "Bitfield";
@@ -451,8 +451,8 @@ function binaryKind(cvar) {
   return /[\x00-\x1f\x7f-\xff]/.test(cvar.value) ? "Serialized" : null;
 }
 
-/* Bitfield and serialized values edit as hex (runtime display_edit_value):
-   two uppercase digits per byte. */
+/* Bitfield and serialized values edit as hex, two uppercase digits per byte
+   (runtime display_edit_value). */
 function editText(cvar, value) {
   if (!binaryKind(cvar)) {
     return value;
@@ -460,8 +460,8 @@ function editText(cvar, value) {
   return Array.from(value, (ch) => ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")).join("");
 }
 
-/* Runtime hex_to_bitfield: whitespace is ignored, empty stays empty, and an
-   odd length or a non-hex digit is invalid (null). */
+/* Parses hex like the runtime's hex_to_bitfield. Whitespace is ignored, empty
+   stays empty, and an odd length or a non-hex digit is invalid (null). */
 function hexToBytes(text) {
   const hex = text.replace(/\s+/g, "");
   if (hex.length % 2 !== 0 || /[^0-9a-f]/i.test(hex)) {
@@ -470,8 +470,9 @@ function hexToBytes(text) {
   return hex.replace(/../g, (pair) => String.fromCharCode(parseInt(pair, 16)));
 }
 
-/* Runtime parse_enum_help: at least two `N = label` or `N: label` pairs in
-   the help text, each label starting with a letter and at most 32 chars. */
+/* Detects enums like the runtime's parse_enum_help. The help text needs at
+   least two `N = label` or `N: label` pairs, each label starting with a
+   letter and at most 32 chars long. */
 function helpEnum(help) {
   if (!help) {
     return null;
@@ -486,9 +487,10 @@ function helpEnum(help) {
   return options.length >= 2 ? options : null;
 }
 
-/* Value type in the runtime's infer_value_type order: Bitfield, Serialized,
-   Enum (help parses as an enum), Unknown (no value), Boolean, Number, List,
-   Text. The meta line, the Type filter, and the type sort all use it. */
+/* Value type, tested in the runtime's infer_value_type order of Bitfield,
+   Serialized, Enum (help parses as an enum), Unknown (no value), Boolean,
+   Number, List, then Text. The meta line, the Type filter, and the type sort
+   all use it. */
 function valueType(cvar) {
   const kind = binaryKind(cvar);
   if (kind) {
@@ -593,9 +595,9 @@ function matchesQuery(cvar) {
   );
 }
 
-/* Runtime rebuild_view sort: lowercase keys compared bytewise; the
-   direction flips only the key, and ties always fall back to name
-   ascending. Changed asc puts unchanged rows first; rows with no range
+/* Sorts like the runtime's rebuild_view. Lowercase keys compare bytewise.
+   The direction flips only the key, and ties always fall back to name
+   ascending. Changed asc puts unchanged rows first. Rows with no range
    width sort last in both directions. */
 function compareCvars(a, b) {
   const dir = state.sort.dir === "desc" ? -1 : 1;
@@ -640,9 +642,9 @@ function filteredCvars() {
   return CVARS.filter((cvar) => matchesFilters(cvar) && matchesQuery(cvar)).sort(compareCvars);
 }
 
-/* Status is transient: every message — errors included — clears 30s after it
-   appears. A new message replaces the old one and restarts the 30s; an empty
-   message clears immediately and disarms the timer. */
+/* Every status message, errors included, clears 30s after it appears. A new
+   message replaces the old one and restarts the 30s. An empty message clears
+   immediately and disarms the timer. */
 const STATUS_TTL_MS = 30000;
 let statusTimer = 0;
 
@@ -694,14 +696,18 @@ function gaugeFor(cvar) {
   const height = 8;
   const x = (bound) => Math.max(0, Math.min(width, ((bound - domainMin) / (domainMax - domainMin)) * width));
   const changed = isChanged(cvar);
-  const ticks = [`<line class="gauge-track" x1="0" y1="4" x2="${width}" y2="4"/>`];
-  const tick = (position, className, y1, y2) => {
-    const px = Math.round(position);
-    return `<line class="${className}" x1="${px}" y1="${y1}" x2="${px}" y2="${y2}"/>`;
+  const ticks = [`<rect class="gauge-track" x="0" y="3" width="${width}" height="1"/>`];
+  // Runtime place_gauge_mark: a w x h mark centered on x on whole pixels —
+  // left edge round(x - w/2), capped at the last track column; top
+  // floor((8 - h)/2), so 1x6 ticks fill rows 1-6 and 1x3 ticks rows 2-4.
+  const mark = (position, className, w, h) => {
+    const left = Math.min(Math.round(position - w / 2), width - 1);
+    const top = Math.floor((height - h) / 2);
+    return `<rect class="${className}" x="${left}" y="${top}" width="${w}" height="${h}"/>`;
   };
 
-  // Open ends: one 1px full-height diagonal through the track end (left `/`,
-  // right `\`), 8px rise over 8px run — not a 5x4 cap.
+  // An open end is one 1px full-height diagonal through the track end (left
+  // `/`, right `\`) that rises 8px over an 8px run, with no 5x4 cap.
   if (knownMin == null) {
     ticks.push(`<line class="gauge-open" x1="0" y1="8" x2="8" y2="0"/>`);
   }
@@ -709,26 +715,23 @@ function gaugeFor(cvar) {
     ticks.push(`<line class="gauge-open" x1="${width - 8}" y1="0" x2="${width}" y2="8"/>`);
   }
   if (helpMin != null) {
-    ticks.push(tick(x(helpMin), "gauge-help", 2, 5));
+    ticks.push(mark(x(helpMin), "gauge-help", 1, 3));
   }
   if (helpMax != null) {
-    ticks.push(tick(x(helpMax), "gauge-help", 2, 5));
+    ticks.push(mark(x(helpMax), "gauge-help", 1, 3));
   }
   if (obsMin != null) {
-    ticks.push(tick(x(obsMin), "gauge-observed", 1, 7));
+    ticks.push(mark(x(obsMin), "gauge-observed", 1, 6));
   }
   if (obsMax != null) {
-    ticks.push(tick(x(obsMax), "gauge-observed", 1, 7));
+    ticks.push(mark(x(obsMax), "gauge-observed", 1, 6));
   }
   if (cvar.clampedAt != null) {
     const clampedX = x(Number(cvar.clampedAt));
-    const capX = Math.round(cvar.clampSide === "low" ? Math.max(0, clampedX - 2) : Math.min(width, clampedX + 2));
-    ticks.push(`<line class="gauge-clamp" x1="${capX}" y1="0" x2="${capX}" y2="8"/>`);
+    const capX = cvar.clampSide === "low" ? Math.max(0, clampedX - 2) : Math.min(width, clampedX + 2);
+    ticks.push(mark(capX, "gauge-clamp", 2, 8));
   }
-  const cursorX = Math.round(x(value));
-  ticks.push(
-    `<line class="gauge-cursor${changed ? " changed" : ""}" x1="${cursorX}" y1="0" x2="${cursorX}" y2="8"/>`,
-  );
+  ticks.push(mark(x(value), `gauge-cursor${changed ? " changed" : ""}`, 2, 8));
 
   const label = [
     helpMin != null || helpMax != null
@@ -813,8 +816,8 @@ function renderDetail() {
     ? `${kind} (${cvar.def.length} bytes)`
     : /^\s*$/.test(cvar.def) ? "empty" : cvar.def;
   // Up to 8 parts in the runtime's order (META_MAX_PARTS = 8). Range help
-  // and Help range never appear together, so the fullest line is 8 parts;
-  // the Secure part is never dropped.
+  // and Help range never appear together, so the fullest line is 8 parts
+  // and the Secure part is never dropped.
   const meta = [
     { text: cvar.scope },
     { text: cvar.category },
@@ -867,8 +870,8 @@ function updateScrollbar() {
   }
   scrollbar.classList.remove("hidden");
   // Thumb geometry maps to the track column (the 8px strip spanning the two
-  // list separators), not just the row viewport, so the thumb always fills
-  // the column top-to-bottom range exactly.
+  // list separators) instead of the row viewport, so the thumb always
+  // travels the full height of the column.
   const trackHeight = scrollbar.clientHeight;
   const thumbHeight = Math.max(32, Math.round((trackHeight * clientHeight) / scrollHeight));
   const maxTop = trackHeight - thumbHeight;
@@ -880,8 +883,8 @@ function updateScrollbar() {
 
 /* ---- Scrolling ----
    Mirrors the runtime's g_frame.scroll_frame_to / smooth_step. Every offset
-   is a whole pixel. A smooth scroll records a target and eases toward it:
-   each frame moves round(diff * min(1, elapsed * 16)) px, at least 1px, and
+   is a whole pixel. A smooth scroll records a target and eases toward it.
+   Each frame moves round(diff * min(1, elapsed * 16)) px, at least 1px, and
    the last step lands exactly on the target. With smooth off (lab toggle,
    `/cvars smooth off`) the same requests jump straight to the target. */
 const SCROLL_EASE_RATE = 16;
@@ -918,7 +921,7 @@ function glideStep(el, now) {
   }
   el.scrollTop = current + step;
   if (Math.round(el.scrollTop) === current) {
-    // Browser zoom can quantize scrollTop; never let a glide stall.
+    // Browser zoom can quantize scrollTop, so never let a glide stall.
     scrollGlides.delete(el);
     el.scrollTop = target;
     return;
@@ -954,12 +957,12 @@ function scrollBase(el) {
 
 function wheelNotches(event) {
   if (event.deltaMode === 1) {
-    return event.deltaY / 3; // lines: 3 per notch
+    return event.deltaY / 3; // lines, 3 per notch
   }
   if (event.deltaMode === 2) {
     return event.deltaY; // pages
   }
-  return event.deltaY / 100; // pixels: ~100 per notch
+  return event.deltaY / 100; // pixels, ~100 per notch
 }
 
 /* Search, filter, regex, and sort changes rebuild the view at the top,
@@ -1109,7 +1112,7 @@ function redo() {
   setStatus(`Redid ${entry.name} to ${editText(cvar, entry.to)}`, "success");
 }
 
-/* ---- Control row: chips, menus, history, copy ---- */
+/* ---- Control row (chips, menus, history, copy) ---- */
 
 function renderControls() {
   const filterCount = activeFilterCount();
@@ -1128,8 +1131,8 @@ function renderControls() {
 
   copyButtonEl.disabled = !selectedCvar();
 
-  // Keep the open menu's scroll position: re-toggling a facet re-renders the
-  // menu, and without this the list would snap back to the top.
+  // Re-toggling a facet re-renders the open menu. Keep its scroll position so
+  // the list doesn't snap back to the top.
   const refresh = (menu, html) => {
     const scrollTop = menu.scrollTop;
     menu.innerHTML = html;
@@ -1220,8 +1223,8 @@ function copyMenuHtml() {
     .join("");
 }
 
-/* CopyToClipboard is protected for addons, so nothing writes the clipboard:
-   copying opens a small box under the Copy button holding the text, focused
+/* CopyToClipboard is protected for addons, so nothing writes the clipboard.
+   Copying opens a small box under the Copy button holding the text, focused
    and fully highlighted, and the status line asks for Ctrl+C. */
 let copyBoxText = "";
 
@@ -1255,7 +1258,7 @@ function copyField(key) {
   };
   const text = fields[key] ?? "";
   if (text === "") {
-    // The runtime says this in chat; the mockup borrows the status line.
+    // The runtime says this in chat. The mockup borrows the status line.
     setStatus(`Nothing to copy for ${cvar.name}`, "");
     return;
   }
@@ -1337,8 +1340,8 @@ function applyScenario(name) {
   }
   jumpListToTop();
   render();
-  // Posted after the render: renderDetail clears the status line, and the
-  // scenario note must live its full 30s like every other status.
+  // Posted after the render because renderDetail clears the status line, and
+  // the scenario note must live its full 30s like every other status.
   setStatus(note, "");
 }
 
@@ -1401,7 +1404,7 @@ function applyFonts() {
 function applyScale(scale) {
   const resolved = SCALES[scale] ?? SCALES[DEFAULTS.scale];
   // The text-size switch changes row height, so it changes the scroll range
-  // the way a runtime size preset does (OnScrollRangeChanged): a list at the
+  // the way a runtime size preset does (OnScrollRangeChanged). A list at the
   // bottom stays pinned there. Otherwise the browser clamps the offset and
   // glideStep clamps any pending target into the new range.
   const before = scrollRange(viewport);
@@ -1461,7 +1464,7 @@ function saveState() {
       }),
     );
   } catch {
-    // Storage can be unavailable; the mockup still works.
+    // Storage can be unavailable. The mockup works without it.
   }
 }
 
@@ -1529,10 +1532,10 @@ searchEl.addEventListener("input", () => {
   render();
 });
 
-/* The runtime hides the placeholder while the search box has focus — the
-   caret blinks where the placeholder starts — and shows it again on blur
-   when the box is empty. The native placeholder handles the "when empty"
-   part; the attribute swap handles the focus. */
+/* The runtime hides the placeholder while the search box has focus (the
+   caret blinks where the placeholder starts) and shows it again on blur
+   when the box is empty. The native placeholder covers the empty case, and
+   the attribute swap handles focus. */
 const SEARCH_PLACEHOLDER = searchEl.placeholder;
 searchEl.addEventListener("focus", () => {
   searchEl.placeholder = "";
@@ -1565,7 +1568,7 @@ searchEl.addEventListener("keydown", (event) => {
     return;
   }
   event.preventDefault();
-  // Enter keeps a row picked with the arrow keys; with no arrow navigation
+  // Enter keeps a row picked with the arrow keys. With no arrow navigation
   // since the text last changed, it takes the first result.
   const entry = (searchNavigated && selectedCvar()) || filteredCvars()[0];
   if (!entry) {
@@ -1614,7 +1617,8 @@ scrollbarThumb.addEventListener("pointermove", (event) => {
   if (maxTop <= 0) {
     return;
   }
-  // 1:1 with the cursor while held: no glide, whole-pixel offsets.
+  // While held, the list tracks the cursor 1 to 1 in whole-pixel offsets,
+  // with no glide.
   const delta = event.clientY - scrollDrag.y;
   scrollFrameTo(viewport, scrollDrag.scrollTop + (delta / maxTop) * scrollRange(viewport), false);
 });
@@ -1744,7 +1748,7 @@ sortMenuEl.addEventListener("click", (event) => {
   if (state.sort.key === key) {
     state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
   } else {
-    // "changed" reads best with changed rows first; the rest default to a-z.
+    // "changed" reads best with changed rows first. The rest default to a-z.
     state.sort = { key, dir: key === "changed" ? "desc" : "asc" };
   }
   jumpListToTop();
@@ -1772,7 +1776,7 @@ copyMenuEl.addEventListener("click", (event) => {
 });
 
 /* Escape, Enter, or losing focus closes the copy box. Typing changes
-   nothing: the text snaps back and stays highlighted. */
+   nothing, since the text snaps back and stays highlighted. */
 copyBoxInputEl.addEventListener("keydown", (event) => {
   if (event.key === "Escape" || event.key === "Enter") {
     event.preventDefault();

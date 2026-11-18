@@ -1,4 +1,6 @@
-# CVar Browser mockup ownership
+# CVar Browser agent rules
+
+## Mockup ownership
 
 - **Designer owns the mock.** Every GUI mockup/design change for this addon is
   owned by the `designer` agent: `mockup/**`, `DESIGN.md`, palettes, type,
@@ -17,14 +19,15 @@
   gauge/scrollbar/key. Size is selected from `Auto`, `Compact` (800×600),
   `Standard` (920×680), or `Large` (1040×760). Every preset renders at one
   frame unit per physical pixel (effective scale 768/physicalHeight, measured
-  as `SCALE.pixel` ≈ 1) and uses integer font sizes; Auto picks from physical
-  screen height. Do not reintroduce percentage/fractional frame scaling.
-- Hairline textures registered with `g_hairline` resize to `1 / SCALE.pixel`,
-  so borders stay one physical pixel. Boxes, lines, single-anchor text
-  origins, the custom title-bar drag, and list scroll offsets are snapped to
-  the physical pixel grid; anchor offsets are frame units (verified in game).
-  The value field and Set/Reset buttons use custom snapped borders, not
-  backdrop edges.
+  as `g_px_per_unit` ≈ 1) and uses integer font sizes; Auto picks from
+  physical screen height. Do not reintroduce percentage/fractional frame
+  scaling.
+- Hairline textures registered with `g_hairline` resize to
+  `1 / g_px_per_unit`, so borders stay one physical pixel. Boxes, lines,
+  single-anchor text origins, the custom title-bar drag, and list scroll
+  offsets are snapped to the physical pixel grid; anchor offsets are frame
+  units (verified in game). The value field and Set/Reset buttons use custom
+  snapped borders, not backdrop edges.
 - Smooth scrolling (`/cvars smooth`, on by default) steps in whole pixels via
   `g_frame.scroll_frame_to`; both the list and the filter popup use it.
 - Slants are font glyphs: gauge open ends use `/` or `\` centered on the
@@ -39,8 +42,17 @@
 - File-scope mutable state and widget handles use a `g_` prefix (`g_db`,
   `g_frame`, `g_selected`, `g_search_box`). UPPERCASE constants, localized
   WoW APIs, and helper functions keep their names, as do locals scoped inside
-  `do ... end` construction blocks. Never reuse a `g_` name for a function
-  local or parameter.
+  `do ... end` construction blocks. `METRICS` stays uppercase: it is a layout
+  table whose fields `apply_ui_scale` rewrites. Never reuse a `g_` name for a
+  function local or parameter. `tests/harness.lua` follows the same rules:
+  shared setup (such as Scan) stays at file scope with `g_` names, and every
+  other test section keeps its locals inside its own `do ... end` block.
+- Initialize every local explicitly (`local x = nil`, or `false`/`0`/`{}`
+  when that is its type). Indent `do ... end` bodies one level, and separate
+  unrelated statement groups and top-level handlers with a blank line.
+- Keep main-chunk register use under 190 of Lua 5.1's 200 slots (the harness
+  enforces it). Prefer `do ... end` scoping for construction-only locals and
+  `g_frame` fields over new file-scope locals.
 - No forward function declarations. Define helpers before callers; wire frame
   scripts after the functions exist.
 - Data comes from `C_Console.GetAllCommands` plus `C_CVar` only. No binary
@@ -49,6 +61,31 @@
   `uiScale` → `"1"`, `"1.000000"`, …); read the current value from
   `C_CVar.GetCVar`.
   Writability is only known from the `C_CVar.SetCVar` result.
-- Keep `luac -p CVarBrowser.lua` clean. A headless WoW API stub harness should
-  cover load, `ADDON_LOADED`, scan, set/clamp/reset, and read-only selection;
-  visual verification still requires an in-game `/reload` and `/cvars`.
+- Keep `luac -p CVarBrowser.lua` clean and `lua tests/harness.lua` passing;
+  CI runs both on every push to `main` and every pull request. Add a harness
+  check for new behavior, and confirm it fails when the behavior is broken.
+  Visual verification still requires an in-game `/reload` and `/cvars`.
+
+## Comments and prose
+
+- Write comments in plain, concise sentences a human can skim (the humanizer
+  skill's rules). In comment prose, use no semicolons, colons, or em/en
+  dashes; use periods, commas, or parentheses instead. Exceptions are a
+  `TODO:` marker and colons that belong to code, such as `frame:Show()`.
+- README.md follows the same humanizer rules. AGENTS.md and DESIGN.md are
+  agent-owned and are not humanized.
+- Text files use LF line endings (`.gitattributes`); fonts are binary.
+
+## CI and releases
+
+- `.github/workflows/ci.yml` tests on push and pull request. A
+  `vMAJOR.MINOR.PATCH` tag (no leading zeros) also packages
+  `CVarBrowser-<version>.zip` and publishes an immutable GitHub release. The
+  zip holds one `CVarBrowser/` folder with the TOC (version stamped from the
+  tag), `CVarBrowser.lua`, `README.md`, and only the fonts the Lua loads via
+  `MEDIA_PATH .. "<file>"`. Change the Package and Verify steps together.
+- The repository only allows GitHub-owned actions, pinned to a full commit
+  SHA with a `# vX.Y.Z` comment. A third-party action needs an allowlist
+  change in repository settings first. Dependabot bumps the pins weekly.
+- `main` and `v*` tags are protected by rulesets: no deletion or force push,
+  signed commits on `main`, and tags cannot be moved. Admins can bypass.

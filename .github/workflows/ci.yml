@@ -6,7 +6,7 @@ on:
     tags: ["v*"]
   pull_request:
 
-# One run per ref; a newer push cancels an older branch run, never a release.
+# One run per ref. A newer push cancels an older branch run, but never a release.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -79,7 +79,7 @@ jobs:
       - name: Verify package
         run: |
           set -euo pipefail
-          # Exactly: one CVarBrowser/ root holding the TOC, Lua, README, and fonts.
+          # The zip must hold one CVarBrowser/ folder with the TOC, Lua, README, and fonts.
           expected=$(printf '%s\n' CVarBrowser/CVarBrowser.toc CVarBrowser/CVarBrowser.lua \
             CVarBrowser/README.md; grep -o 'MEDIA_PATH \.\. "[^"]*"' CVarBrowser.lua \
             | sed 's/.*"\(.*\)"/CVarBrowser\/Media\/\1/' | sort -u)

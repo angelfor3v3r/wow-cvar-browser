@@ -1,82 +1,78 @@
 # CVar Browser
 
-A searchable, editable browser for every console variable exposed by the WoW Forever client.
+Search, inspect, edit, and reset every console variable the WoW Forever client exposes.
 
 ## Install
 
-1. Copy this repository into `Interface/AddOns/CVarBrowser`.
-2. Restart the client (or `/reload` if the addon was already loaded).
+1. Download `CVarBrowser-<version>.zip` from the latest GitHub release and extract it into `Interface/AddOns`, so you end up with `Interface/AddOns/CVarBrowser`. Before the first release, or to run unreleased changes, copy this repository into `Interface/AddOns/CVarBrowser` instead.
+2. Restart the client, or `/reload` if it is already running.
 3. Run `/cvars` or `/cb`.
 
 ## Features
 
 - Search CVars by name or help text.
-- Live current values, defaults, account/character scope, and category.
-- Editable values with clamp/normalization feedback and reset-to-default.
-- Undo/redo the last successful set.
-- Read-only, secure, changed-only, and observed-bound indicators.
-- Learned clamp bounds with listing and clear-one/all.
-- Custom 88×8 range gauge per row.
-- Draggable minimap button and Addon Compartment entry.
-- Saved window position.
-- **Auto / Compact / Standard / Large** layout presets. Each preset uses a 1:1 pixel grid and integer font sizes; Auto picks from physical screen height.
+- See each CVar's current value, default, account or character scope, and category.
+- Edit values, see when the client clamps or normalizes them, and reset to default.
+- Undo and redo successful changes.
+- Markers for read-only, secure, changed, and observed-bound CVars.
+- Learned clamp bounds that you can list and clear.
+- An 88×8 range gauge on every row.
+- A draggable minimap button and an Addon Compartment entry.
+- The window remembers its position.
+- Auto, Compact, Standard, and Large sizes. Every size draws one UI unit per physical pixel with whole-number font sizes, and Auto picks a size from your physical screen height.
 
 ## Slash commands
 
-- `/cvars` or `/cb` — toggle the browser
-- `/cvars <name>` — open, search, and select a CVar
-- `/cvars refresh` — rescan
-- `/cvars undo` — undo the last successful set
-- `/cvars redo` — redo the last undo
-- `/cvars ranges [name]` — list learned clamp bounds, optionally for one CVar
-- `/cvars sort name|type|scope|category|changed|range [asc|desc]` — sort rows
-- `/cvars copy [value|raw|default|name|help|range] [cvar]` — show the text highlighted in a copy box; press Ctrl+C (addons can't write the clipboard)
-- `/cvars minimap` — hide/show the minimap button
-- `/cvars minimap reset` — reset its angle
-- `/cvars clearranges` — clear learned bounds
-- `/cvars clearrange <name>` — clear one learned bound
-- `/cvars regex` — toggle Lua-pattern search
-- `/cvars smooth [on|off]` — toggle smooth list scrolling (on by default)
-- `/cvars filters` — show search-filter syntax
-- `/cvars help` — list commands
+| Command | What it does |
+|---|---|
+| `/cvars` or `/cb` | Toggle the browser |
+| `/cvars <name>` | Open, search, and select a CVar |
+| `/cvars refresh` | Rescan |
+| `/cvars undo` | Undo the last successful set |
+| `/cvars redo` | Redo the last undo |
+| `/cvars ranges [name]` | List learned clamp bounds, for all CVars or one |
+| `/cvars sort name\|type\|scope\|category\|changed\|range [asc\|desc]` | Sort the rows |
+| `/cvars copy [value\|raw\|default\|name\|help\|range] [cvar]` | Show the text selected in a copy box so you can press Ctrl+C (addons can't write to the clipboard) |
+| `/cvars minimap` | Hide or show the minimap button |
+| `/cvars minimap reset` | Reset the minimap button's angle |
+| `/cvars clearranges` | Clear all learned bounds |
+| `/cvars clearrange <name>` | Clear one learned bound |
+| `/cvars regex` | Toggle Lua-pattern search |
+| `/cvars smooth [on\|off]` | Toggle smooth list scrolling (on by default) |
+| `/cvars filters` | Show the search filter syntax |
+| `/cvars help` | List the commands |
 
-## GUI controls
+## Window controls
 
-The second control row exposes the same filters and sort state as the slash commands: a `Filters` popup (scope, category, type, Has facets), a `Sort` menu with direction, undo/redo buttons, and a `Copy` menu. The `.*` chip toggles regex search. The title-bar `Size` menu offers `Auto`, `Compact`, `Standard`, and `Large`. Each preset renders one UI unit per physical pixel with integer font sizes; `Auto` chooses from physical screen height. The old percentage UI scaling is gone. The minimap button and its angle remain command-only (`/cvars minimap [reset]`).
+The second row of controls mirrors the slash commands. `Filters` opens a popup for scope, category, type, and Has facets. `Sort` picks a sort key and direction. Next come undo and redo, then `Copy`. The `.*` chip toggles regex search, and the `Size` menu in the title bar picks Auto, Compact, Standard, or Large. The minimap button can only be hidden or reset from chat (`/cvars minimap [reset]`).
 
-Status messages clear automatically after 30 seconds; a new status resets the timer. The `Filters` chip shows the active facet count and its popup has `Clear all`.
+Status messages clear after 30 seconds, and a new message restarts the timer. The `Filters` chip shows how many facets are active, and its popup has `Clear all`.
 
-Search filters are typed into the search box and can be combined:
+You can type filters into the search box and combine them:
 
 ```text
 scope:account category:graphics type:number has:range changed
 ```
 
-Supported: `scope:account|character|local`, `category:<name>`,
-`type:number|boolean|enum|text|list|bitfield|serialized`,
-`has:range|observed|help|default|changed`, and the bare token `changed`.
-With `/cb regex` enabled, the remaining text is treated as a Lua pattern.
-Up/Down in the search box moves the selection; Enter focuses the value field.
+The supported filters are `scope:account|character|local`, `category:<name>`, `type:number|text|boolean|enum|list|bitfield|serialized`, `has:range|observed|help|default|changed`, and the bare word `changed`. With `/cb regex` on, the rest of the text is a Lua pattern. Up and Down in the search box move the selection, and Enter selects that row (or the first match) and focuses the value field.
 
-Serialized/binary values are shown as `Serialized (N bytes)` and edited as hex.
+Bitfield and serialized values show as `Bitfield (N bytes)` or `Serialized (N bytes)`, and you edit them as hex.
 
-## Range sources
+## Where ranges come from
 
-The client exposes no public table of CVar min/max bounds. `C_Console` help text is parsed when it contains a range, and clamp attempts add learned observed bounds. `C_Settings`/`Settings.GetSetting` only cover settings registered with the Settings UI and do not expose arbitrary CVar bounds, so the addon does not rely on it.
+The client has no public table of CVar minimum and maximum values. The addon reads a range from the `C_Console` help text when the text has one, and it learns bounds when the client clamps a value you set. `C_Settings` and `Settings.GetSetting` only know settings registered with the Settings UI, so the addon doesn't use them.
 
 ## Development
 
-`mockup/index.html` is the isolated visual mock; serve the folder over HTTP rather than opening it with `file:`.
+`mockup/index.html` is the standalone visual mock. Serve the repository folder over HTTP and open `/mockup/`, because the mock loads fonts from `Media/` and won't work from a `file:` URL. `DESIGN.md` holds the visual specification.
 
-`DESIGN.md` records the final visual specification.
+`lua tests/harness.lua` (Lua 5.1, run from the repository folder) loads the addon against headless WoW API stubs. It checks loading, scanning, set/clamp/reset, undo/redo, read-only and in-combat secure selection, slash commands, copy, pattern search, smooth scrolling, the pixel-locked drag, and main-chunk register headroom, and it exits non-zero on failure. Pixel-level visuals still need an in-game `/reload`.
 
-`lua tests/harness.lua` (Lua 5.1, run from this folder) loads the addon against headless WoW API stubs and checks load, scan, set/clamp/reset, undo/redo, read-only and in-combat secure selection, slash commands, copy, pattern search, smooth scrolling, the pixel-locked drag, and main-chunk register headroom. It exits non-zero on failure. Visual pixel checks still need an in-game `/reload`.
-
-CI (`.github/workflows/ci.yml`) runs `luac -p` and the harness on every push and pull request. To cut a release, push a tag:
+CI (`.github/workflows/ci.yml`) runs `luac -p` and the harness on every push to `main` and on every pull request. To cut a release, push a tag:
 
 ```sh
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The tag must look like `vMAJOR.MINOR.PATCH` (an optional `-suffix` marks a pre-release). After the tests pass, CI stamps the version into the TOC and attaches `CVarBrowser-<version>.zip` to a GitHub release with generated notes. The zip contains one `CVarBrowser/` folder with the TOC, `CVarBrowser.lua`, `README.md`, and only the fonts the addon loads from `Media/`.
+Tags must be `vMAJOR.MINOR.PATCH` with no leading zeros. Once the tests pass, CI writes the version into the TOC, builds `CVarBrowser-<version>.zip`, and publishes a GitHub release with generated notes. The zip has a single `CVarBrowser/` folder holding the TOC, `CVarBrowser.lua`, `README.md`, and only the fonts the addon loads from `Media/`. Releases are immutable once published, and `v*` tags can't be moved or deleted.

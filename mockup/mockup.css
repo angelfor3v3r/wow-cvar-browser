@@ -275,9 +275,10 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 .size-anchor { margin-left: auto; }
 .size-menu {
   display: inline-flex; align-items: center; justify-content: flex-start;
-  /* Title-bar meta chrome: fixed meta size and nowrap so the label can never
-     wrap. Snug: the label sits 4px from the box's left edge; 72x24 is the
-     minimum, the box grows with the label at larger text sizes. */
+  /* Title-bar meta chrome uses the fixed meta size and nowrap, so the label
+     never wraps. The fit is snug, with the label 4px from the box's left
+     edge. The minimum is 72x24, and the box grows with the label at larger
+     text sizes. */
   min-width: 72px; height: 24px; padding: 0 4px;
   white-space: nowrap;
   font-family: var(--font-ui); font-size: var(--small-size);
@@ -288,7 +289,7 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   background: var(--surface-hover); border-color: var(--accent); color: var(--text);
 }
 .close {
-  /* Snug fit floor: 24x28. The 12px gap keeps the Size box's right edge at
+  /* Snug fit, at least 24x28. The 12px gap keeps the Size box's right edge at
      the runtime anchor (52px in from the window's right edge). */
   margin-left: 12px;
   min-width: 24px; height: 28px; padding: 0 4px;
@@ -304,8 +305,8 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   display: flex; align-items: center; gap: 16px;
 }
 .search {
-  /* Magnifier 14x14 at 4px from the left edge, vertically centered; the
-     caret and text start at x=22 (icon right edge + 4px gap). */
+  /* The 14x14 magnifier sits 4px from the left edge, vertically centered.
+     The caret and text start at x=22 (icon right edge + 4px gap). */
   display: flex; align-items: center; gap: 4px;
   width: 300px; height: 32px; padding: 0 10px 0 4px;
   background: var(--surface); border: 1px solid var(--border);
@@ -331,7 +332,7 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   border-bottom: 2px solid var(--accent);
   /* The runtime anchors its check glyph 1px right of the 18px box's
      geometric center. The screen-space translate lands the rotated L's ink
-     there: once rotated the ink sits ~1px below center, hence (1, -1). */
+     there. Rotation leaves the ink ~1px below center, hence (1, -1). */
   transform: translate(1px, -1px) rotate(-45deg);
   opacity: 0;
 }
@@ -340,7 +341,7 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 
 .count { margin-left: auto; color: var(--muted); font-size: var(--small-size); white-space: nowrap; }
 
-/* ---- Control row: filters, sort, history, copy ---- */
+/* ---- Control row (filters, sort, history, copy) ---- */
 
 .toolbar-controls {
   position: absolute;
@@ -349,8 +350,8 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   display: flex; align-items: center; gap: 8px;
 }
 
-/* Chip geometry: icon 4px from the left edge, label at x=18 (icon + 4px
-   gap), 6px right padding; width fits the label above the minimum. */
+/* Chips put the icon 4px from the left edge and the label at x=18 (icon +
+   4px gap), with 6px right padding. Width fits the label above the minimum. */
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
   height: 26px; padding: 0 6px 0 4px;
@@ -374,16 +375,16 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 .chip[aria-expanded="true"], .btn[aria-expanded="true"] {
   background: var(--surface-hover); border-color: var(--accent); color: var(--text);
 }
-/* Active (non-default) filter or sort: accent border + accent summary. The
-   chip itself is the active-filter summary; a muted "Filters" label would be
-   redundant chrome. */
+/* An active (non-default) filter or sort gets an accent border and accent
+   summary. The chip itself is the active-filter summary, so it carries no
+   muted "Filters" label. */
 .chip.active {
   border-color: var(--accent);
   color: var(--text);
 }
 .chip.active .chip-count { color: var(--accent); }
-/* Regex toggle: pressed state is an accent underline, not a fill — it is a
-   mode of the search box, not a filter. */
+/* The pressed regex toggle gets an accent underline instead of a fill,
+   because it is a mode of the search box and not a filter. */
 .regex-chip { padding: 0 7px; letter-spacing: .04em; }
 .regex-chip[aria-pressed="true"] {
   color: var(--accent);
@@ -394,8 +395,8 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 .menu-anchor { position: relative; }
 .history-controls { display: inline-flex; gap: 8px; }
 
-/* The control row is one 26px band: its buttons match the chips instead of
-   the 30px detail-row buttons. */
+/* The control row is one 26px band, so its buttons match the chips instead
+   of the 30px detail-row buttons. */
 .toolbar-controls .btn {
   height: 26px; padding: 0 4px;
   font-size: var(--small-size);
@@ -406,11 +407,11 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   min-width: 24px; height: 26px; padding: 0 4px;
   display: inline-flex; align-items: center; justify-content: center;
 }
-/* Undo/redo arrows are drawn marks, not font glyphs: a glyph's ink center
-   moves with every font's metrics. The runtime anchors its glyphs 1px left
-   and 2px below the button's center (the arrow ink sits top-right in its em
-   box); the marks carry the same offset. The hooked shape mirrors the sort
-   icon's arrow language. */
+/* Undo/redo arrows are drawn marks because a font glyph's ink center moves
+   with every font's metrics. The runtime anchors its glyphs 1px left and 2px
+   below the button's center (the arrow ink sits top-right in its em box),
+   and the marks carry the same offset. The hooked shape matches the sort
+   icon's arrows. */
 .history-icon {
   width: 12px; height: 12px; flex: 0 0 auto;
   transform: translate(-1px, 2px);
@@ -427,10 +428,10 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   padding: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
-  /* Never taller than the window allows: the control row's popups open at
-     y=130 inside the 678px content box, so 536px leaves 12px of air above
-     the window's bottom edge. Overflow scrolls internally — an 8px muted
-     thumb in the list-scrollbar language, not a browser default. */
+  /* The control row's popups open at y=130 inside the 678px content box, so
+     a 536px cap leaves 12px of air above the window's bottom edge. Overflow
+     scrolls inside the popup with an 8px muted thumb styled like the list
+     scrollbar instead of the browser default. */
   max-height: 536px;
   overflow-y: auto;
   scrollbar-width: thin;
@@ -487,9 +488,9 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 .menu-clear:disabled:hover { border-color: var(--border); color: var(--muted); }
 .menu-sep { display: block; height: 1px; background: var(--border); margin: 4px 2px; }
 
-/* Title-bar size menu mirrors the runtime popup: 126px wide, 22px rows in
-   meta size, and the current preset takes the 2px accent left bar (the
-   selected-row language) plus accent text — not a tick. */
+/* The title-bar size menu mirrors the runtime popup. It is 126px wide with
+   22px rows in meta size. The current preset gets the selected row's 2px
+   accent left bar and accent text instead of a tick. */
 .size-popup { width: 126px; min-width: 126px; }
 .size-row {
   position: relative;
@@ -508,8 +509,8 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
    BOTTOMLEFT, 4px down) holding the text focused and fully highlighted for
    Ctrl+C. The edit box sits 10px in from each side with 2px text insets.
    The box only exists while its text has focus, so it wears the focus
-   accent border of the search box and value field; the highlight is the
-   accent selection tint. No shadow, matching the runtime frame. */
+   accent border of the search box and value field. The highlight is the
+   accent selection tint. It has no shadow, matching the runtime frame. */
 .copy-box {
   position: absolute;
   top: calc(100% + 4px);
@@ -531,9 +532,10 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 }
 .copy-box input::selection { background: rgba(var(--accent-rgb), .35); color: var(--text); }
 
-/* right: 24px + 30px right padding keeps the label columns aligned with the
-   rows while the border-bottom divider runs on to x=896 — flush with the
-   scrollbar column's right edge and the detail separator's right end. */
+/* The 24px right offset plus 30px right padding keeps the label columns
+   aligned with the rows, while the bottom divider runs on to x=896, flush
+   with the scrollbar column's right edge and the detail separator's right
+   end. */
 .list-header {
   position: absolute;
   top: 132px; left: 24px; right: 24px;
@@ -555,7 +557,7 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   height: 1px;
   background: var(--border);
 }
-/* Labels are raised: center offset +1 in the 16px header band — 3px of
+/* Labels sit 1px above center in the 16px header band, leaving 3px of
    clearance above the band's bottom separator (the runtime anchors them
    +1 up). */
 .list-header span { transform: translateY(-1px); }
@@ -586,8 +588,8 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   color: var(--text);
   font-size: var(--body-size);
 }
-/* Hover fill only on an unselected row under the pointer: selecting the
-   hovered row clears it, and after a scroll it follows the pointer. */
+/* Only an unselected row under the pointer gets the hover fill. Selecting
+   the hovered row clears it, and after a scroll it follows the pointer. */
 .row:not(.selected):hover { background: var(--surface-hover); }
 .row.selected { background: rgba(var(--accent-rgb), .14); border-left-color: var(--accent); }
 .row .name, .row .value { font-family: var(--font-data); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -614,17 +616,20 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   width: 88px;
   height: 8px;
   overflow: visible;
-  /* 1x reference render: strokes snap to whole pixels, and the open slants
-     rasterize as a 5x4 pixel staircase — what a pre-baked texture looks like
-     in game. Rotated 1px strips antialias; do not use them. */
+  /* 1x reference render. Strokes snap to whole pixels, and the open slants
+     rasterize as a 5x4 pixel staircase, the way a pre-baked texture looks
+     in game. Rotated 1px strips antialias, so do not use them. */
   shape-rendering: crispEdges;
 }
-.gauge .gauge-track { stroke: var(--border); stroke-width: 1; }
-.gauge .gauge-help { stroke: var(--muted); stroke-width: 1; opacity: .72; }
-.gauge .gauge-observed { stroke: var(--observed); stroke-width: 2; }
-.gauge .gauge-clamp { stroke: var(--warning); stroke-width: 2; }
-.gauge .gauge-cursor { stroke: var(--text); stroke-width: 2; }
-.gauge .gauge-cursor.changed { stroke: var(--changed); }
+/* Track and marks are whole-pixel rects, placed like the runtime's
+   textures: track 88x1 on row 3, help ticks 1x3, observed ticks 1x6,
+   cursor and clamp cap 2x8. */
+.gauge .gauge-track { fill: var(--border); }
+.gauge .gauge-help { fill: var(--muted); }
+.gauge .gauge-observed { fill: var(--observed); }
+.gauge .gauge-clamp { fill: var(--warning); }
+.gauge .gauge-cursor { fill: var(--text); }
+.gauge .gauge-cursor.changed { fill: var(--changed); }
 .gauge .gauge-open { stroke: var(--muted); stroke-width: 1; opacity: .75; }
 .gauge-empty { display: block; position: relative; width: 88px; height: 8px; }
 .gauge-empty i {
@@ -637,10 +642,10 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   transform: translateX(-50%);
 }
 
-/* The 8px column spans exactly between the two list separators: top edge on
-   the header divider's bottom face (y=148), bottom edge on the detail
-   separator's top face (y=496). Right edge (x=896) is where both separators
-   end. */
+/* The 8px column spans exactly between the two list separators. The top
+   edge is on the header divider's bottom face (y=148) and the bottom edge on
+   the detail separator's top face (y=496). Both separators end at its right
+   edge (x=896). */
 .scrollbar { position: absolute; top: -4px; right: -24px; bottom: -4px; width: 8px; }
 .scrollbar.hidden { display: none; }
 .scrollbar-track {
@@ -652,8 +657,8 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   width: 4px;
   background: var(--surface-hover);
 }
-/* Single solid fill at alpha 1.0 in every state — the track must never show
-   through. left: 0 / width: 8px fills the column exactly, so the thumb's
+/* One solid fill at alpha 1.0 in every state, so the track never shows
+   through. Left 0 and width 8px fill the column exactly, so the thumb's
    right edge stays flush with the separators' right ends. */
 .scrollbar-thumb {
   position: absolute;

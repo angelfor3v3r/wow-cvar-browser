@@ -164,18 +164,21 @@ key geometry is untouched.
 across rows. Domain is the union of help and observed bounds.
 
 - **Help bounds**: 1×3px muted hairline ticks at min/max; 1px track between.
-- **Observed bounds**: 2×6px muted-teal ticks. Draw both when help and observed
-  differ.
+- **Observed bounds**: 1×6px muted-teal ticks, rows 1–6 of the 8px gauge.
+  Draw both when help and observed differ.
 - **Current value**: 2px × 8px cursor in primary text; changed lilac when the
   value differs from default.
 - **Open bound**: a single font glyph at the open end — `/` for a missing
   minimum, `\` for a missing maximum — centered on the track edge. No cap and
   no stroke texture.
 - **Pixel grid**: every drawn mark is an unrotated, integer-snapped texture —
-  track 88×1, help ticks 1×3, observed ticks 2×6, cursor and clamp cap 2×8.
-  Open ends are font glyphs, not textures. The mockup draws its marks with
-  `shape-rendering: crispEdges` at 1x; its SVG slashes stand in for the
-  runtime glyphs.
+  track 88×1 on row 3, help ticks 1×3 (rows 2–4), observed ticks 1×6
+  (rows 1–6), cursor and clamp cap 2×8. A w×h mark centers on its value's
+  x: left edge `round(x − w/2)`, capped at the last track column (87) so a
+  tick at the max lands on the track; top `floor((8 − h)/2)`. Open ends
+  are font glyphs, not textures. The mockup draws the track and marks as
+  SVG rects with the same placement, under `shape-rendering: crispEdges`
+  at 1x; its SVG slashes stand in for the runtime glyphs.
 - **No bounds**: blank track plus one centered 2px `--dot` dot.
 - **Clamp**: 2px amber edge cap beside the cursor; amber status line. Clamp is
   transient, not a stored observed bound.
@@ -358,7 +361,8 @@ across rows. Domain is the union of help and observed bounds.
   purpose: the status line reports what just happened, it never holds state
   that outlives the next look.
 - **Semantic key**: glossary marks with plain-language labels: changed lilac
-  text = differs from default; tally ticks (12×8, two 1px ticks) = observed
+  text = differs from default; tally ticks (12×8: two 1×6 ticks 10px apart,
+  rows 1–6) = observed
   bounds; hollow square (9×9, 1px lines) = read-only; cursor (2×8) = current
   value. Entries sit 16px apart, marks 8px from their labels. The hint shows
   the marks inline as the runtime draws them: two font glyphs `/ \` in a
