@@ -486,6 +486,39 @@ do
     check(#g_set_calls == calls_before, "Set does not call SetCVar for read-only")
 end
 
+-- Numeric defaults, unknown defaults, and chat pipes -------------------------
+
+do
+    -- The client can report a value and its default in different forms.
+    g_by_name.secureThing.default = "1.000000"
+    slash("refresh")
+    check(g_frame.by_name.secureThing and not g_frame.by_name.secureThing.changed,
+        "a value equal to its default as a number is not changed")
+    g_by_name.secureThing.default = "1"
+
+    g_by_name.extra3.default = nil
+    slash("refresh")
+    slash("extra3")
+    check(g_set_button._enabled and not g_reset_button._enabled,
+        "Reset is disabled when the default is unknown")
+    local calls_before = #g_set_calls
+    fire_script(g_reset_button, "OnClick")
+    check(#g_set_calls == calls_before, "Reset sends nothing when the default is unknown")
+    g_by_name.extra3.default = "0"
+    slash("refresh")
+
+    -- Chat reads a bare pipe as an escape code, so lists use "||".
+    for _, command in ipairs({ "help", "filters" }) do
+        g_chat = {}
+        slash(command)
+        local text = (g_chat[1] or "")
+            :gsub("^|c%x%x%x%x%x%x%x%xCVarBrowser|r ", "")
+            :gsub("||", "")
+        check(g_chat[1] ~= nil and not text:find("|", 1, true),
+            "/cvars " .. command .. " escapes every pipe")
+    end
+end
+
 -- Locked CVar ----------------------------------------------------------------
 
 do
@@ -533,14 +566,39 @@ do
     check(thumb._scripts.OnUpdate == nil, "releasing the filter thumb ends the drag")
     g_cursor_y = 360
     g_frame.close_menus()
+
+    -- Clear all drops its hover look when it disables under the pointer.
+    g_frame.filters.scope = "account"
+    fire_script(g_frame.filter_chip, "OnClick")
+    local clear = g_frame.filter_clear
+    clear._mouse_over = true
+    fire_script(clear, "OnEnter")
+    check(clear._enabled and clear.background._color[1] == 0.137255,
+        "Clear all shows its hover fill")
+    fire_script(clear, "OnClick")
+    check(not clear._enabled and clear.background._color[1] == 0.101961
+        and clear.borders[1]._color[1] == 0.203922,
+        "Clear all drops its hover look when it disables under the pointer")
+    clear._mouse_over = false
+    g_frame.close_menus()
 end
 
 -- Secure CVar in combat ------------------------------------------------------
 
 do
-    g_in_combat = true
-    fire("PLAYER_REGEN_DISABLED")
+    -- PLAYER_REGEN_DISABLED fires before lockdown, so the controls update
+    -- on the next frame, once InCombatLockdown is true.
     slash("secureThing")
+    for index = #g_timers, 1, -1 do
+        g_timers[index] = nil
+    end
+    fire("PLAYER_REGEN_DISABLED")
+    g_in_combat = true
+    for _, timer in ipairs(g_timers) do
+        if timer.delay == 0 then
+            timer.callback()
+        end
+    end
     check(not g_set_button._enabled, "Set disabled for a secure CVar in combat")
     g_in_combat = false
     fire("PLAYER_REGEN_ENABLED")
@@ -1190,6 +1248,41 @@ do
     timer._scripts.OnUpdate(timer, 0.6)
     check(not panel._shown, "controls show no tooltip while a menu is open")
     g_frame.close_menus()
+
+    -- The Size popup closes on an outside click or when another menu opens,
+    -- and no tooltip shows while it or the copy box is open.
+    local size_popup = find_widget(function(w)
+        return w.option ~= nil
+    end)._parent
+    local size_button = find_widget(function(w)
+        return w.label and w.label._text and w.label._text:match("^Size: ") ~= nil
+    end)
+    fire_script(size_button, "OnClick")
+    check(size_popup._shown and g_frame.menu_catcher._shown,
+        "the Size popup opens with the outside-click catcher")
+    first_row._mouse_over = true
+    fire_script(first_row, "OnEnter")
+    timer._scripts.OnUpdate(timer, 0.6)
+    check(not panel._shown, "rows show no tooltip while the Size popup is open")
+    first_row._mouse_over = false
+    fire_script(first_row, "OnLeave")
+    fire_script(g_frame.menu_catcher, "OnMouseDown", "LeftButton")
+    check(not size_popup._shown, "an outside click closes the Size popup")
+    fire_script(size_button, "OnClick")
+    fire_script(g_frame.sort_chip, "OnClick")
+    check(not size_popup._shown and g_frame.sort_popup._shown,
+        "opening another menu closes the Size popup")
+    g_frame.close_menus()
+    slash("copy name")
+    first_row._mouse_over = true
+    fire_script(first_row, "OnEnter")
+    timer._scripts.OnUpdate(timer, 0.6)
+    check(not panel._shown, "rows show no tooltip while the copy box is open")
+    first_row._mouse_over = false
+    fire_script(first_row, "OnLeave")
+    fire_script(g_frame.copy_box, "OnEscapePressed")
+    g_frame.hide_tooltip()
+
     -- The title names the pattern search state, off then on.
     local function regex_title()
         fire_script(g_frame.regex_chip, "OnEnter")

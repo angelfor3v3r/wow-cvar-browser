@@ -100,6 +100,16 @@ apply_backdrop(g_scale_popup, COLORS.surface, COLORS.border)
 g_scale_popup:Hide()
 g_frame.snap_boxes[#g_frame.snap_boxes + 1] = g_scale_popup
 
+-- The Size popup is one more menu, so closing the toolbar menus (Escape, an
+-- outside click, another menu opening, the window showing) closes it too.
+do
+    local close_toolbar_menus = g_frame.close_menus
+    g_frame.close_menus = function()
+        g_scale_popup:Hide()
+        close_toolbar_menus()
+    end
+end
+
 for index, option in ipairs(LAYOUT_OPTIONS) do
     local row = CreateFrame("Button", nil, g_scale_popup)
     row:SetSize(124, 22)
@@ -380,14 +390,17 @@ local function set_layout(value)
     if g_frame.db then
         g_frame.db.preset = value
     end
-    g_scale_popup:Hide()
+    g_frame.close_menus()
 end
 
 local function toggle_scale_popup()
     if g_scale_popup:IsShown() then
-        g_scale_popup:Hide()
+        g_frame.close_menus()
     else
+        g_frame.close_menus()
+        g_frame.hide_tooltip()
         update_scale_button()
+        g_frame.menu_catcher:Show()
         g_scale_popup:Show()
         g_frame.snap_box(g_scale_popup)
         g_scale_popup:Raise()
@@ -395,7 +408,6 @@ local function toggle_scale_popup()
 end
 
 -- Shared with the files loaded after this one.
-ns.g_scale_popup = g_scale_popup
 ns.g_scale_rows = g_scale_rows
 ns.snap_frame_position = snap_frame_position
 ns.apply_ui_scale = apply_ui_scale

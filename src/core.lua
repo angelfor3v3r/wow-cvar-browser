@@ -813,9 +813,13 @@ local function read_cvar_value(entry)
     entry.locked = locked
     entry.secure = secure
     entry.readonly = readonly
+    -- Compare numbers by value, since the client can report a value and its
+    -- default in different forms ("1" against "1.000000" for uiScale).
     entry.changed = value ~= nil
         and default_value ~= nil
         and value ~= default_value
+        and not (tonumber(value) ~= nil
+            and tonumber(value) == tonumber(default_value))
     entry.bitfield = BITFIELD_CVARS[entry.name] == true
     entry.serialized = false
     if not entry.bitfield and value ~= nil then

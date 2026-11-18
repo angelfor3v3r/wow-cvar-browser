@@ -205,12 +205,12 @@ do
         if lower == "help" then
             chat(
                 "commands: "
-                    .. "/cvars | /cb, /cvars <name>, refresh, undo, redo, "
-                    .. "fav [name], log [count|name], clearlog, "
+                    .. "/cvars || /cb, /cvars <name>, refresh, undo, redo, "
+                    .. "fav [name], log [count||name], clearlog, "
                     .. "ranges [name], clearrange <name>, clearranges, "
-                    .. "sort name|type|scope|category|changed|range [asc|desc], "
-                    .. "copy [value|raw|default|name|help|range] [cvar], "
-                    .. "regex [on|off], smooth [on|off], minimap [reset], filters"
+                    .. "sort name||type||scope||category||changed||range [asc||desc], "
+                    .. "copy [value||raw||default||name||help||range] [cvar], "
+                    .. "regex [on||off], smooth [on||off], minimap [reset], filters"
             )
             return
         end
@@ -284,10 +284,10 @@ do
         if lower == "filters" then
             chat(
                 "filters: "
-                    .. "scope:account|character|local, "
+                    .. "scope:account||character||local, "
                     .. "cat:graphics, "
-                    .. "type:number|boolean|enum|text|list|bitfield|serialized, "
-                    .. "has:range|observed|help|default|changed|fav, "
+                    .. "type:number||boolean||enum||text||list||bitfield||serialized, "
+                    .. "has:range||observed||help||default||changed||fav, "
                     .. "value:<text>, value:=<exact>, and changed. "
                     .. "/cb regex toggles Lua-pattern search."
             )

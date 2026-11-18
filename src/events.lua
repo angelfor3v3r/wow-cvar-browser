@@ -42,7 +42,6 @@ local g_scroll_child = ns.g_scroll_child
 local g_scrollbar = ns.g_scrollbar
 local g_scrollbar_thumb = ns.g_scrollbar_thumb
 local g_rows = ns.g_rows
-local g_scale_popup = ns.g_scale_popup
 local g_scale_rows = ns.g_scale_rows
 local g_detail_edit_frame = ns.g_detail_edit_frame
 local g_detail_edit = ns.g_detail_edit
@@ -357,9 +356,8 @@ g_frame:SetScript("OnKeyDown", function(self, pressed)
     end
     local handled = false
     if pressed == "ESCAPE" then
-        if g_frame.menu_catcher:IsShown() or g_scale_popup:IsShown() then
+        if g_frame.menu_catcher:IsShown() then
             g_frame.close_menus()
-            g_scale_popup:Hide()
             handled = true
         elseif (g_search_box:GetText() or "") ~= "" then
             g_search_box:SetText("")
@@ -538,7 +536,6 @@ end)
 
 g_frame:SetScript("OnShow", function(self)
     self:Raise()
-    g_scale_popup:Hide()
     g_frame.close_menus()
     apply_ui_scale()
     rescan()
@@ -594,11 +591,14 @@ g_frame:SetScript("OnEvent", function(self, event, argument)
     elseif event == "PLAYER_REGEN_DISABLED"
         or event == "PLAYER_REGEN_ENABLED" then
         -- PLAYER_REGEN_DISABLED fires just before lockdown, the last moment
-        -- to make sure no key stays swallowed through combat.
+        -- to make sure no key stays swallowed through combat. Lockdown is
+        -- not on yet, so the controls update on the next frame.
         if event == "PLAYER_REGEN_DISABLED" then
             self:SetPropagateKeyboardInput(true)
+            C_Timer.After(0, update_controls)
+        else
+            update_controls()
         end
-        update_controls()
     elseif event == "UI_SCALE_CHANGED"
         or event == "DISPLAY_SIZE_CHANGED" then
         relayout()

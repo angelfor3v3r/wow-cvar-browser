@@ -65,9 +65,24 @@ do
         return count
     end
 
+    -- Hover visuals stay off while disabled. A button disabled under the
+    -- pointer would keep its hover look, since most disabled buttons get no
+    -- OnLeave.
     local function set_enabled(button, enabled)
         button:SetEnabled(enabled)
         button:SetAlpha(enabled and 1 or 0.38)
+        if enabled then
+            return
+        end
+        if button.borders then
+            set_texture_color(button.background, COLORS.surface)
+            g_hairline.set_color(
+                button.borders,
+                button.active and COLORS.accent or COLORS.border
+            )
+        else
+            button.background:SetAlpha(0)
+        end
     end
 
     -- The Has facets in menu order. The Filters chip tooltip lists them in

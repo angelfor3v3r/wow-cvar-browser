@@ -118,19 +118,20 @@ g_frame.notify = set_status
 local function update_controls()
     local entry = g_frame.selected
     local editable = can_edit(entry)
+    -- Reset needs a known default, or it would write an empty value.
+    local resettable = editable and entry.default_value ~= nil
 
     if editable then
         g_detail_edit:Enable()
         g_set_button:Enable()
-        g_reset_button:Enable()
     else
         g_detail_edit:Disable()
         g_set_button:Disable()
-        g_reset_button:Disable()
     end
+    g_reset_button:SetEnabled(resettable)
     g_detail_edit_frame:SetAlpha(editable and 1 or 0.55)
     g_set_button:SetAlpha(editable and 1 or 0.38)
-    g_reset_button:SetAlpha(editable and 1 or 0.38)
+    g_reset_button:SetAlpha(resettable and 1 or 0.38)
 
     local name_color = COLORS.text
     if entry and entry.readonly then
@@ -976,11 +977,16 @@ local function apply_value(action)
 end
 
 local function reset_value()
-    if not g_frame.selected or g_frame.selected.readonly then
+    local entry = g_frame.selected
+    if not entry or entry.readonly then
+        return
+    end
+    if entry.default_value == nil then
+        set_status("This CVar has no known default.", "error")
         return
     end
     g_detail_edit:SetText(
-        display_edit_value(g_frame.selected, g_frame.selected.default_value)
+        display_edit_value(entry, entry.default_value)
     )
     apply_value("reset")
 end

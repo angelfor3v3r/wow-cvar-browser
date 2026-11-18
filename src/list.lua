@@ -472,14 +472,16 @@ do
     end
 
     -- Asks for the tooltip of a row (over_toggle when the pointer is on its
-    -- favorite toggle) or of a control with a tooltip_text function. Rows
-    -- wait out a thumb drag, and controls show nothing while a menu is open.
+    -- favorite toggle) or of a control with a tooltip_text function. Nothing
+    -- shows while a menu or the copy box is open, and rows wait out a thumb
+    -- drag.
     g_frame.request_tooltip = function(target, over_toggle)
-        if target.tooltip_text then
-            if g_frame.menu_catcher:IsShown() then
-                return
-            end
-        elseif not target.entry or g_scrollbar_thumb.drag then
+        if g_frame.menu_catcher:IsShown()
+            or g_frame.copy_box_frame:IsShown() then
+            return
+        end
+        if not target.tooltip_text
+            and (not target.entry or g_scrollbar_thumb.drag) then
             return
         end
         if panel:IsShown() or (timer.grace or 0) > 0 then
