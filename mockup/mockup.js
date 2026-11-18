@@ -138,7 +138,7 @@ const CVARS = [
     help: "Maximum distance at which nameplates are shown.",
     range: "max 50",
     source: "observed",
-    observed: "max: 200 -> 50 (was 40)",
+    observed: "max 50 (asked 200, was 40)",
     value: "45",
     def: "40",
     observedMax: 50,
@@ -150,7 +150,7 @@ const CVARS = [
     help: "Vertical overlap of stacked nameplates [0.5, 2.5].",
     range: "max 1.6",
     source: "observed",
-    observed: "max: 3 -> 1.6",
+    observed: "max 1.6 (asked 3)",
     helpRange: "0.5 - 2.5",
     value: "1.1",
     def: "1.1",
@@ -187,7 +187,7 @@ const CVARS = [
     help: "Shadow texture size.",
     range: "",
     source: "observed",
-    observed: "min: 256 -> 512; max: 8192 -> 4096 (2x)",
+    observed: "max 4096 (asked 8192, 2x), min 512 (asked 256)",
     value: "4096",
     def: "2048",
     observedMin: 512,
@@ -437,6 +437,10 @@ const regexChipEl = document.getElementById("regex-chip");
 const filterChipEl = document.getElementById("filter-chip");
 const filterLabelEl = document.getElementById("filter-label");
 const filterMenuEl = document.getElementById("filter-menu");
+const filterHeaderEl = document.getElementById("filter-header");
+const filterScrollEl = document.getElementById("filter-scroll");
+const filterScrollbarEl = document.getElementById("filter-scrollbar");
+const filterThumbEl = document.getElementById("filter-scrollbar-thumb");
 const sortChipEl = document.getElementById("sort-chip");
 const sortLabelEl = document.getElementById("sort-label");
 const sortMenuEl = document.getElementById("sort-menu");
@@ -615,14 +619,18 @@ function activeFilterCount() {
   return count;
 }
 
+// The menu facets in menu order (scope, category, type, then Has in the
+// menu's row order), as the Filters chip tooltip lists them. Changed only
+// and typed search terms are not menu facets, so they never appear here.
 function filterSummary() {
   const f = state.filters;
   const parts = [];
   if (f.scope !== "all") parts.push(`scope:${f.scope}`);
   if (f.category !== "all") parts.push(`category:${f.category}`);
   if (f.type !== "all") parts.push(`type:${f.type}`);
-  for (const facet of f.has) parts.push(`has:${facet}`);
-  if (state.changedOnly) parts.push("changed");
+  for (const facet of HAS_FACETS) {
+    if (f.has.includes(facet)) parts.push(`has:${facet}`);
+  }
   return parts.join(", ");
 }
 
@@ -1103,13 +1111,13 @@ function applyValue() {
   if (binaryKind(cvar)) {
     const decoded = hexToBytes(requested);
     if (decoded == null) {
-      setStatus("Bitfield/serialized value must be an even-length hex string.", "error");
+      setStatus("Bitfield and serialized values take hex with an even number of digits.", "error");
       return;
     }
     requested = decoded;
   }
   if (cvar.ignoreSet) {
-    setStatus(`Ignored: ${cvar.name} stays ${editText(cvar, previous)}`, "error");
+    setStatus(`${cvar.name} ignored it and stays ${editText(cvar, previous)}`, "error");
     return;
   }
 
@@ -1174,7 +1182,9 @@ function resetValue() {
   cvar.clampedAt = null;
   cvar.clampSide = null;
   render();
-  setStatus(`Reset ${cvar.name} to ${editText(cvar, cvar.def)}`, "success");
+  // The runtime's Reset fills in the default and runs the Set path, so the
+  // status reads like an accepted Set.
+  setStatus(`Set ${cvar.name} = ${editText(cvar, cvar.def)}`, "success");
   valueEditEl.focus();
   valueEditEl.select();
 }
@@ -1202,6 +1212,7 @@ function undo() {
   cvar.clampedAt = null;
   cvar.clampSide = null;
   history.redo.push(entry);
+  hideTooltip(false);
   state.selected = entry.name;
   render();
   setStatus(`Undid ${entry.name} to ${editText(cvar, entry.from)}`, "success");
@@ -1220,6 +1231,7 @@ function redo() {
   cvar.clampedAt = null;
   cvar.clampSide = null;
   history.undo.push(entry);
+  hideTooltip(false);
   state.selected = entry.name;
   render();
   setStatus(`Redid ${entry.name} to ${editText(cvar, entry.to)}`, "success");
@@ -1232,7 +1244,6 @@ function renderControls() {
   // One text run with ordinary spaces, as the runtime's update_filter_chip.
   filterLabelEl.textContent = filterCount ? `Filters ${filterCount}` : "Filters off";
   filterChipEl.classList.toggle("active", filterCount > 0);
-  filterChipEl.title = filterCount ? `Active filters: ${filterSummary()}` : "No active filters";
 
   const sortActive = state.sort.key !== "name" || state.sort.dir !== "asc";
   sortLabelEl.textContent = `Sort ${state.sort.key} ${state.sort.dir}`;
@@ -1245,22 +1256,15 @@ function renderControls() {
 
   copyButtonEl.disabled = !selectedCvar();
 
-  // Re-toggling a facet re-renders the open menu. Keep its scroll position so
-  // the list doesn't snap back to the top.
-  const refresh = (menu, html) => {
-    const scrollTop = menu.scrollTop;
-    menu.innerHTML = html;
-    menu.scrollTop = scrollTop;
-  };
-  if (openMenu === filterMenuEl) {
-    refresh(filterMenuEl, filterMenuHtml());
-  } else if (openMenu === sortMenuEl) {
-    refresh(sortMenuEl, sortMenuHtml());
-  } else if (openMenu === copyMenuEl) {
-    refresh(copyMenuEl, copyMenuHtml());
-  } else if (openMenu === sizeMenuEl) {
-    refresh(sizeMenuEl, sizeMenuHtml());
+  if (openMenu) {
+    fillMenu(openMenu);
   }
+}
+
+// The header sits above the scroll body, so it stays put while the rows
+// scroll (runtime filter_popup header and filter_scroll).
+function filterHeaderHtml() {
+  return `<span class="menu-title">Filters</span><button type="button" class="menu-clear" id="filter-clear"${activeFilterCount() || state.changedOnly ? "" : " disabled"}>Clear all</button>`;
 }
 
 function filterMenuHtml() {
@@ -1275,7 +1279,6 @@ function filterMenuHtml() {
 
   const categories = [...new Set(CVARS.map((c) => c.category))].sort();
   return `
-    <div class="menu-header">Filters <button type="button" class="menu-clear" id="filter-clear"${activeFilterCount() || state.changedOnly ? "" : " disabled"}>Clear all</button></div>
     <div class="menu-group">
       <span class="menu-group-label">Scope</span>
       ${rows("scope", [["all", "All"], ["account", "Account"], ["character", "Character"], ["local", "Local"]], f.scope)}
@@ -1292,6 +1295,31 @@ function filterMenuHtml() {
       <span class="menu-group-label">Has</span>
       ${rows("has", [["range", "Range"], ["observed", "Observed bounds"], ["help", "Help range"], ["default", "Default"], ["changed", "Differs from default"], ["favorite", "Favorite"]], f.has)}
     </div>`;
+}
+
+/* The filter menu's own scrollbar, as the runtime's update_filter_scrollbar.
+   It shows only when the rows overflow by more than 1px. The thumb is
+   floor(viewport² / (range + viewport)) tall, at least 24px, and its top
+   maps the offset over the column's free travel. */
+function updateFilterScrollbar() {
+  const range = scrollRange(filterScrollEl);
+  filterScrollbarEl.hidden = range <= 1;
+  if (range <= 1) {
+    return;
+  }
+  const viewportHeight = filterScrollEl.clientHeight;
+  const thumbHeight = Math.max(24, Math.floor((viewportHeight * viewportHeight) / (range + viewportHeight)));
+  const maxTop = filterScrollbarEl.clientHeight - thumbHeight;
+  filterThumbEl.style.height = `${thumbHeight}px`;
+  filterThumbEl.style.top = `${Math.round((filterScrollEl.scrollTop / range) * maxTop)}px`;
+}
+
+function renderFilterMenu() {
+  filterHeaderEl.innerHTML = filterHeaderHtml();
+  const scrollTop = filterScrollEl.scrollTop;
+  filterScrollEl.innerHTML = filterMenuHtml();
+  filterScrollEl.scrollTop = scrollTop;
+  updateFilterScrollbar();
 }
 
 function sortMenuHtml() {
@@ -1379,7 +1407,9 @@ function copyField(key) {
   }
   closeMenus();
   showCopyBox(text);
-  setStatus(`Press Ctrl+C to copy ${key}: ${cvar.name}`, "success");
+  // The field as the Copy menu names it, so the status reads as a sentence.
+  const fieldNames = { raw: "raw value", help: "help text" };
+  setStatus(`Press Ctrl+C to copy the ${fieldNames[key] ?? key} of ${cvar.name}`, "success");
 }
 
 let openMenu = null;
@@ -1397,15 +1427,29 @@ function closeMenus() {
   openMenuButton = null;
 }
 
-function toggleMenu(button, menu, html) {
+/* Fills an open popup. The filter menu keeps its frame (header, scroll body,
+   and scrollbar) and refills only the header and rows, so its offset and any
+   pending glide survive a facet toggle. The other menus are fixed frames
+   that never scroll. */
+function fillMenu(menu) {
+  if (menu === filterMenuEl) {
+    renderFilterMenu();
+    return;
+  }
+  const html = menu === sortMenuEl ? sortMenuHtml : menu === copyMenuEl ? copyMenuHtml : sizeMenuHtml;
+  menu.innerHTML = html();
+}
+
+function toggleMenu(button, menu) {
   const wasOpen = openMenu === menu;
   closeMenus();
   if (wasOpen) {
     return;
   }
-  menu.innerHTML = html();
   hideTooltip(false);
   menu.hidden = false;
+  // Filled once shown, so the filter scrollbar can measure the rows.
+  fillMenu(menu);
   button.setAttribute("aria-expanded", "true");
   openMenu = menu;
   openMenuButton = button;
@@ -1467,6 +1511,10 @@ function applyScenario(name) {
       searchEl.value = state.query;
       note = "Row tooltip for realmList, held open until the pointer reaches the list";
       break;
+    case "control-tooltip":
+      state.filters = { scope: "account", category: "all", type: "number", has: ["changed"] };
+      note = "Filters chip tooltip, held open until the pointer reaches a control or the list";
+      break;
     default:
       break;
   }
@@ -1478,6 +1526,8 @@ function applyScenario(name) {
   if (name === "tooltip") {
     // After this frame's scroll events, so the jump to the top cannot hide it.
     requestAnimationFrame(() => showTooltip({ name: "realmList", toggle: false }));
+  } else if (name === "control-tooltip") {
+    requestAnimationFrame(() => showTooltip({ control: filterChipEl }));
   }
 }
 
@@ -1664,16 +1714,19 @@ function resetOptions() {
   saveState();
 }
 
-/* ---- Row tooltip ----
-   Mirrors the runtime row tooltip (DESIGN.md, Row tooltip). It shows after
-   the pointer rests 500ms on a row. While it is up, or within 100ms of it
-   hiding, the next row swaps in at once. Its text column lines up with the
-   row's name column (panel x = row x + 14, text 8px in), 4px below the row,
-   or 4px above it when below would come within 8px of the window's bottom.
-   Over the favorite toggle it holds one action line instead. */
+/* ---- Tooltips ----
+   One panel serves rows and controls (DESIGN.md, Row tooltip and Control
+   tooltips), with one shared timer. It shows after the pointer rests 500ms
+   on a target. While it is up, or within 100ms of it hiding, the next
+   target swaps in at once. A row's text column lines up with the row's
+   name column (panel x = row x + 14, text 8px in), 4px below the row, or
+   4px above it when below would come within 8px of the window's bottom.
+   Over the favorite toggle it holds one action line instead. A control's
+   panel shares the control's left edge, 4px below it. */
 const TOOLTIP_DELAY_MS = 500;
 const TOOLTIP_WARM_MS = 100;
 const tooltipEl = document.getElementById("row-tooltip");
+const TOOLTIP_CONTROLS = [regexChipEl, filterChipEl, undoButtonEl, redoButtonEl];
 let tipTimer = 0;
 let tipKey = "";
 let tipHiddenAt = -Infinity;
@@ -1688,8 +1741,52 @@ function tooltipTarget(el) {
   return { name: row.dataset.name, toggle: Boolean(el.closest(".fav-toggle")) };
 }
 
+// Hit-tested by rect, because a disabled button takes no pointer events and
+// the disabled Undo and Redo still show their tooltips.
+function controlAt(x, y) {
+  return TOOLTIP_CONTROLS.find((el) => {
+    const rect = el.getBoundingClientRect();
+    return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+  }) ?? null;
+}
+
 function tooltipKeyOf(target) {
-  return target ? `${target.name}${target.toggle ? "|toggle" : ""}` : "";
+  if (!target) {
+    return "";
+  }
+  if (target.control) {
+    return `control:${target.control.id}`;
+  }
+  return `${target.name}${target.toggle ? "|toggle" : ""}`;
+}
+
+function tipLine(classes, text) {
+  return `<div class="tip-line ${classes}">${escapeHtml(text)}</div>`;
+}
+
+// A title line and a detail line. Empty means the control has no tooltip
+// in its current state (the Filters chip with no menu facets).
+function controlTooltipHtml(control) {
+  if (control === regexChipEl) {
+    return state.regex
+      ? tipLine("tip-title", "Pattern search on")
+        + tipLine("tip-detail", "The search is one Lua pattern, such as ^nameplate or quality$. Terms like scope:account still filter, and an invalid pattern matches nothing.")
+      : tipLine("tip-title", "Pattern search off")
+        + tipLine("tip-detail", "Search words match as plain text. Click to read the search as a Lua pattern, such as ^nameplate or quality$.");
+  }
+  if (control === filterChipEl) {
+    return activeFilterCount()
+      ? tipLine("tip-title", "Active filters") + tipLine("tip-detail", filterSummary())
+      : "";
+  }
+  const isUndo = control === undoButtonEl;
+  const stack = isUndo ? history.undo : history.redo;
+  const entry = stack[stack.length - 1];
+  const keys = tipLine("tip-detail tip-muted", isUndo ? "Ctrl+Z" : "Ctrl+Y or Ctrl+Shift+Z");
+  if (!entry) {
+    return tipLine("tip-title tip-muted", isUndo ? "Nothing to undo" : "Nothing to redo") + keys;
+  }
+  return tipLine("tip-title", `${isUndo ? "Undo" : "Redo"} ${entry.name}`) + keys;
 }
 
 function tooltipHtml(cvar, toggle) {
@@ -1714,6 +1811,19 @@ function tooltipHtml(cvar, toggle) {
 }
 
 function showTooltip(target) {
+  const appRect = app.getBoundingClientRect();
+  if (target.control) {
+    const html = controlTooltipHtml(target.control);
+    tooltipEl.hidden = !html;
+    if (!html) {
+      return;
+    }
+    tooltipEl.innerHTML = html;
+    const rect = target.control.getBoundingClientRect();
+    tooltipEl.style.left = `${Math.round(rect.left - appRect.left - app.clientLeft)}px`;
+    tooltipEl.style.top = `${Math.round(rect.bottom - appRect.top - app.clientTop) + 4}px`;
+    return;
+  }
   const cvar = CVARS.find((c) => c.name === target.name);
   const row = [...rowsEl.querySelectorAll(".row")].find((el) => el.dataset.name === target.name);
   if (!cvar || !row) {
@@ -1721,7 +1831,6 @@ function showTooltip(target) {
   }
   tooltipEl.innerHTML = tooltipHtml(cvar, target.toggle);
   tooltipEl.hidden = false;
-  const appRect = app.getBoundingClientRect();
   const rowRect = row.getBoundingClientRect();
   const rowTop = Math.round(rowRect.top - appRect.top - app.clientTop);
   const height = tooltipEl.offsetHeight;
@@ -1733,8 +1842,9 @@ function showTooltip(target) {
   tooltipEl.style.top = `${top}px`;
 }
 
-// A warm hide (the pointer left the row) lets the next row show at once. A
-// cold hide (click, scroll, menu) makes the next show wait the full delay.
+// A warm hide (the pointer left its target) lets the next target show at
+// once. A cold hide (click, scroll, menu, undo) makes the next show wait the
+// full delay.
 function hideTooltip(warm) {
   clearTimeout(tipTimer);
   tipTimer = 0;
@@ -1749,7 +1859,7 @@ function hideTooltip(warm) {
 function armTooltip(target) {
   clearTimeout(tipTimer);
   tipTimer = 0;
-  if (openMenu || !copyBoxEl.hidden || scrollDrag) {
+  if (openMenu || !copyBoxEl.hidden || scrollbarThumb.drag) {
     return;
   }
   if (!tooltipEl.hidden || performance.now() - tipHiddenAt <= TOOLTIP_WARM_MS) {
@@ -1783,11 +1893,45 @@ rowsEl.addEventListener("pointerleave", () => {
   hideTooltip(true);
 });
 
+/* Controls. The rows' handler above runs first, so this only takes over
+   while the pointer is on a control or has just left one. A control with no
+   tooltip in its state counts as no target. */
+app.addEventListener("pointermove", (event) => {
+  const control = controlAt(event.clientX, event.clientY);
+  const target = control && controlTooltipHtml(control) ? { control } : null;
+  if (!target && !tipKey.startsWith("control:")) {
+    return;
+  }
+  const key = tooltipKeyOf(target);
+  if (key === tipKey) {
+    return;
+  }
+  tipKey = key;
+  if (target) {
+    armTooltip(target);
+  } else {
+    hideTooltip(true);
+  }
+});
+
+// A press on an enabled control hides its tooltip cold. It returns only
+// after the pointer leaves the control and comes back.
+app.addEventListener("pointerdown", (event) => {
+  const control = controlAt(event.clientX, event.clientY);
+  if (control && !control.disabled) {
+    hideTooltip(false);
+  }
+}, true);
+
 app.addEventListener("pointerenter", () => {
   pointerOverApp = true;
 });
 app.addEventListener("pointerleave", () => {
   pointerOverApp = false;
+  if (tipKey.startsWith("control:")) {
+    tipKey = "";
+    hideTooltip(true);
+  }
 });
 
 /* Clicking the toggle flips the favorite without selecting the row. The
@@ -1947,7 +2091,11 @@ valueEditEl.addEventListener("keydown", (event) => {
 viewport.addEventListener("scroll", () => {
   updateScrollbar();
   hideTooltip(false);
-  const target = tipPointer && !scrollDrag
+  // A control's tooltip stays down until the pointer re-enters the control.
+  if (tipKey.startsWith("control:")) {
+    return;
+  }
+  const target = tipPointer && !scrollbarThumb.drag
     ? tooltipTarget(document.elementFromPoint(tipPointer.x, tipPointer.y))
     : null;
   tipKey = tooltipKeyOf(target);
@@ -1956,37 +2104,51 @@ viewport.addEventListener("scroll", () => {
   }
 }, { passive: true });
 
-let scrollDrag = null;
-scrollbarThumb.addEventListener("pointerdown", (event) => {
-  scrollDrag = { y: event.clientY, scrollTop: viewport.scrollTop };
-  scrollbarThumb.setPointerCapture(event.pointerId);
-  event.preventDefault();
-});
-scrollbarThumb.addEventListener("pointermove", (event) => {
-  if (!scrollDrag) {
-    return;
-  }
-  const maxTop = scrollbar.clientHeight - scrollbarThumb.offsetHeight;
-  if (maxTop <= 0) {
-    return;
-  }
-  // While held, the list tracks the cursor 1 to 1 in whole-pixel offsets,
-  // with no glide.
-  const delta = event.clientY - scrollDrag.y;
-  scrollFrameTo(viewport, scrollDrag.scrollTop + (delta / maxTop) * scrollRange(viewport), false);
-});
-// Release settles on the nearest whole row so the top row is never left
-// half-clipped.
-function endScrollDrag() {
-  if (!scrollDrag) {
-    return;
-  }
-  scrollDrag = null;
+/* Dragging a scrollbar thumb follows the cursor in whole units of its
+   element's scroll range, with no glide (runtime wire_thumb_drag). The
+   travel and range are measured at the press. The drag lives in thumb.drag
+   while it runs, and onStop runs when it ends. */
+function wireThumbDrag(thumb, bar, el, onStop) {
+  thumb.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    thumb.drag = {
+      y: event.clientY,
+      scrollTop: el.scrollTop,
+      maxTop: Math.max(1, bar.clientHeight - thumb.offsetHeight),
+      maxScroll: scrollRange(el),
+    };
+    thumb.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  thumb.addEventListener("pointermove", (event) => {
+    const drag = thumb.drag;
+    if (!drag) {
+      return;
+    }
+    scrollFrameTo(el, drag.scrollTop + ((event.clientY - drag.y) / drag.maxTop) * drag.maxScroll, false);
+  });
+  const stop = () => {
+    if (!thumb.drag) {
+      return;
+    }
+    thumb.drag = null;
+    onStop?.();
+  };
+  thumb.addEventListener("pointerup", stop);
+  thumb.addEventListener("pointercancel", stop);
+}
+
+// Releasing the list's thumb settles the list on the nearest whole row, so
+// the top row is never left half-clipped.
+wireThumbDrag(scrollbarThumb, scrollbar, viewport, () => {
   const row = rowHeight();
   scrollFrameTo(viewport, Math.round(viewport.scrollTop / row) * row, true);
-}
-scrollbarThumb.addEventListener("pointerup", endScrollDrag);
-scrollbarThumb.addEventListener("pointercancel", endScrollDrag);
+});
+
+// The filter menu's thumb has no settle. The rows stay where it was let go.
+wireThumbDrag(filterThumbEl, filterScrollbarEl, filterScrollEl, null);
 
 viewport.addEventListener("wheel", (event) => {
   if (event.ctrlKey) {
@@ -2054,18 +2216,17 @@ regexChipEl.addEventListener("click", () => {
   state.regex = !state.regex;
   jumpListToTop();
   render();
-  setStatus(state.regex ? "Search treats the query as a regular expression" : "Literal search", "");
+  setStatus(state.regex ? "Pattern search on" : "Pattern search off", "");
 });
 
 filterChipEl.addEventListener("click", () => {
-  toggleMenu(filterChipEl, filterMenuEl, filterMenuHtml);
+  toggleMenu(filterChipEl, filterMenuEl);
 });
 
 filterMenuEl.addEventListener("click", (event) => {
   const clear = event.target.closest("#filter-clear");
   if (clear) {
     clearFilters();
-    filterMenuEl.innerHTML = filterMenuHtml();
     return;
   }
   const row = event.target.closest(".menu-row[data-facet]");
@@ -2089,16 +2250,20 @@ filterMenuEl.addEventListener("click", (event) => {
   setStatus(activeFilterCount() ? `Filters: ${filterSummary()}` : "Filters cleared", "");
 });
 
+// The wheel works anywhere over the menu, header included, and scrolls the
+// rows (runtime scroll_filter_list).
 filterMenuEl.addEventListener("wheel", (event) => {
   if (event.ctrlKey) {
     return;
   }
   event.preventDefault();
-  scrollFrameTo(filterMenuEl, scrollBase(filterMenuEl) + wheelNotches(event) * FILTER_WHEEL_STEP, true);
+  scrollFrameTo(filterScrollEl, scrollBase(filterScrollEl) + wheelNotches(event) * FILTER_WHEEL_STEP, true);
 }, { passive: false });
 
+filterScrollEl.addEventListener("scroll", updateFilterScrollbar, { passive: true });
+
 sortChipEl.addEventListener("click", () => {
-  toggleMenu(sortChipEl, sortMenuEl, sortMenuHtml);
+  toggleMenu(sortChipEl, sortMenuEl);
 });
 
 sortMenuEl.addEventListener("click", (event) => {
@@ -2125,7 +2290,7 @@ copyButtonEl.addEventListener("click", () => {
   if (copyButtonEl.disabled) {
     return;
   }
-  toggleMenu(copyButtonEl, copyMenuEl, copyMenuHtml);
+  toggleMenu(copyButtonEl, copyMenuEl);
 });
 
 copyMenuEl.addEventListener("click", (event) => {
@@ -2155,7 +2320,7 @@ copyBoxInputEl.addEventListener("blur", () => {
 });
 
 sizeButtonEl.addEventListener("click", () => {
-  toggleMenu(sizeButtonEl, sizeMenuEl, sizeMenuHtml);
+  toggleMenu(sizeButtonEl, sizeMenuEl);
 });
 
 sizeMenuEl.addEventListener("click", (event) => {
@@ -2187,8 +2352,8 @@ document.addEventListener("pointerdown", (event) => {
 });
 
 /* With no edit box focused, Escape closes an open menu, then clears the
-   search text, then closes the window. Navigation keys move the selection
-   while the pointer is over the window. */
+   search text, then closes the window. Navigation keys and the undo/redo
+   shortcuts act only while the pointer is over the window. */
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && openMenu) {
     const button = openMenuButton;
@@ -2214,7 +2379,7 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  if (!event.ctrlKey || event.altKey) {
+  if (!event.ctrlKey || event.altKey || !pointerOverApp) {
     return;
   }
   const key = event.key.toLowerCase();

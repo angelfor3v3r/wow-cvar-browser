@@ -1,0 +1,505 @@
+-- CVar Browser. Slash commands.
+
+local _, ns = ...
+
+-- Localized WoW APIs ---------------------------------------------------------
+
+local SlashCmdList = SlashCmdList
+local SetCVarNative = (C_CVar and C_CVar.SetCVar) or SetCVar
+local pairs, ipairs = pairs, ipairs
+local type, tostring, tonumber = type, tostring, tonumber
+local pcall = pcall
+local floor, max = math.floor, math.max
+local format = string.format
+local sort, remove = table.sort, table.remove
+local date = date
+
+-- Shared from earlier files --------------------------------------------------
+
+local g_frame = ns.g_frame
+local DB_DEFAULTS = ns.DB_DEFAULTS
+local UNDO_LIMIT = ns.UNDO_LIMIT
+local trim = ns.trim
+local display_edit_value = ns.display_edit_value
+local format_observed_range = ns.format_observed_range
+local format_observed_evidence = ns.format_observed_evidence
+local apply_range = ns.apply_range
+local read_cvar_value = ns.read_cvar_value
+local can_edit = ns.can_edit
+local log_change = ns.log_change
+local g_search_box = ns.g_search_box
+local g_detail_edit = ns.g_detail_edit
+local set_status = ns.set_status
+local select_entry = ns.select_entry
+local rebuild_view = ns.rebuild_view
+local rescan = ns.rescan
+
+-- WoW's chat code scans globals named SLASH_<KEY><n> (n = 1, 2, ...)
+-- and routes each listed command to SlashCmdList["<KEY>"]. The
+-- handler gets the rest of the line after the command word.
+SLASH_CVARBROWSER1 = "/cvars"
+SLASH_CVARBROWSER2 = "/cb"
+SLASH_CVARBROWSER3 = "/cvarbrowser"
+
+do
+    local function chat(text)
+        DEFAULT_CHAT_FRAME:AddMessage("|cffB7A3CCCVarBrowser|r " .. text)
+    end
+
+    -- Rescans a shown window. Showing a hidden one rescans through OnShow.
+    local function refresh()
+        if g_frame:IsShown() then
+            rescan()
+        else
+            g_frame:Show()
+        end
+    end
+
+    -- Undo and redo are mirror images. Pop one stack, re-apply its previous
+    -- value, and push the value it replaced onto the other stack.
+    local function step_history(verb)
+        local is_undo = verb == "undo"
+        local from = is_undo and g_frame.undo_stack or g_frame.redo_stack
+        local last = from[#from]
+        if not last then
+            chat("nothing to " .. verb)
+            return
+        end
+        -- The Undo and Redo tooltips name the CVar on top of the stack, so
+        -- any step hides the tooltip rather than leave it stale.
+        g_frame.hide_tooltip()
+        g_frame:Show()
+        local entry = g_frame.by_name[last.name]
+        if not entry then
+            chat("CVar " .. last.name .. " no longer exists")
+            return
+        end
+        if not can_edit(entry) then
+            chat(
+                "cannot " .. verb .. " " .. last.name .. " in its current state"
+            )
+            return
+        end
+        local title = is_undo and "Undo" or "Redo"
+        local current = entry.value
+        from[#from] = nil
+        local ok, result = pcall(SetCVarNative, last.name, last.previous)
+        if not ok or result == false then
+            from[#from + 1] = last
+            chat(verb .. " refused for " .. last.name)
+            set_status(title .. " of " .. last.name .. " was refused", "error")
+            return
+        end
+        read_cvar_value(entry)
+        if entry.value ~= last.previous then
+            from[#from + 1] = last
+            chat(verb .. " did not stick for " .. last.name)
+            set_status(title .. " of " .. last.name .. " did not stick", "error")
+            return
+        end
+        local to = is_undo and g_frame.redo_stack or g_frame.undo_stack
+        to[#to + 1] = {
+            name = last.name,
+            previous = current,
+        }
+        if not is_undo and #to > UNDO_LIMIT then
+            remove(to, 1)
+        end
+        log_change(entry, verb, current, entry.value)
+        apply_range(entry)
+        select_entry(entry)
+        local text = format(
+            is_undo and "Undid %s to %s" or "Redid %s to %s",
+            last.name,
+            display_edit_value(entry, entry.value)
+        )
+        set_status(text)
+        chat(text)
+    end
+
+    SlashCmdList["CVARBROWSER"] = function(message)
+        local message_text = trim(message or "")
+        local lower = message_text:lower()
+
+        if lower == "minimap" or lower:match("^minimap%s+") then
+            if type(g_frame.minimap_button) ~= "table" then
+                chat("minimap button unavailable")
+                return
+            end
+            local argument = lower:match("^minimap%s+(%S+)")
+            if argument == "reset" then
+                if g_frame.db then
+                    g_frame.db.minimap_angle = DB_DEFAULTS.minimap_angle
+                end
+                g_frame.minimap_button:update_position()
+                chat("minimap angle reset")
+            else
+                if g_frame.db then
+                    g_frame.db.minimap_hidden = not g_frame.db.minimap_hidden
+                end
+                local hidden = g_frame.db and g_frame.db.minimap_hidden
+                g_frame.minimap_button:SetShown(not hidden)
+                chat("minimap button " .. (hidden and "hidden" or "shown"))
+            end
+            return
+        end
+
+        if lower == "copy" or lower:match("^copy%s+") then
+            g_frame:Show()
+            local field = lower:match("^copy%s+(%S+)") or "value"
+            local target_name = lower:match("^copy%s+%S+%s+(%S+)")
+            local known = {
+                value = true,
+                raw = true,
+                default = true,
+                name = true,
+                help = true,
+                range = true,
+            }
+            if not known[field] then
+                target_name = field
+                field = "value"
+            end
+            local entry = g_frame.selected
+            if target_name then
+                entry = g_frame.by_name[target_name]
+            end
+            if not entry then
+                chat("no CVar selected to copy")
+                return
+            end
+            local value = nil
+            if field == "name" then
+                value = entry.name
+            elseif field == "default" then
+                value = entry.default_value
+            elseif field == "help" then
+                value = entry.help
+            elseif field == "range" then
+                value = entry.range_text
+            elseif field == "raw" then
+                value = entry.value
+            else
+                value = display_edit_value(entry, entry.value)
+            end
+            if value == nil or value == "" then
+                chat("nothing to copy for " .. entry.name)
+                return
+            end
+            g_frame.close_menus()
+            g_frame.show_copy_box(tostring(value))
+            -- The field as the Copy menu names it, so the status reads as
+            -- a sentence.
+            local field_names = {
+                raw = "raw value",
+                help = "help text",
+            }
+            set_status(format(
+                "Press Ctrl+C to copy the %s of %s",
+                field_names[field] or field,
+                entry.name
+            ))
+            return
+        end
+
+        if lower == "help" then
+            chat(
+                "commands: "
+                    .. "/cvars | /cb, /cvars <name>, refresh, undo, redo, "
+                    .. "fav [name], log [count|name], clearlog, "
+                    .. "ranges [name], clearrange <name>, clearranges, "
+                    .. "sort name|type|scope|category|changed|range [asc|desc], "
+                    .. "copy [value|raw|default|name|help|range] [cvar], "
+                    .. "regex [on|off], smooth [on|off], minimap [reset], filters"
+            )
+            return
+        end
+
+        local sort_key, sort_dir = lower:match("^sort%s+(%S+)%s*(%S*)$")
+        if sort_key then
+            local valid = sort_key == "name"
+                or sort_key == "type"
+                or sort_key == "scope"
+                or sort_key == "category"
+                or sort_key == "changed"
+                or sort_key == "range"
+            if not valid then
+                set_status(
+                    "Sort must be name, type, scope, category, changed, or range.",
+                    "error"
+                )
+                return
+            end
+            if sort_dir ~= "" and sort_dir ~= "asc" and sort_dir ~= "desc" then
+                set_status("Sort direction must be asc or desc.", "error")
+                return
+            end
+            g_frame.sort_key = sort_key
+            if sort_dir == "" then
+                sort_dir = sort_key == "changed" and "desc" or "asc"
+            end
+            g_frame.sort_dir = sort_dir
+            g_frame.update_sort_chip()
+            rebuild_view()
+            set_status("Sorted by " .. sort_key .. " " .. sort_dir)
+            return
+        end
+
+        if lower == "regex" or lower:match("^regex%s+") then
+            local value = lower:match("^regex%s+(%S+)")
+            if value == "on" then
+                g_frame.regex_enabled = true
+            elseif value == "off" then
+                g_frame.regex_enabled = false
+            else
+                g_frame.regex_enabled = not g_frame.regex_enabled
+            end
+            g_frame.update_regex_chip()
+            rebuild_view()
+            local text = "Pattern search "
+                .. (g_frame.regex_enabled and "on" or "off")
+            set_status(text)
+            chat(text)
+            return
+        end
+
+        if lower == "smooth" or lower:match("^smooth%s+") then
+            if g_frame.db then
+                local value = lower:match("^smooth%s+(%S+)")
+                if value == "on" then
+                    g_frame.db.smooth_scroll = true
+                elseif value == "off" then
+                    g_frame.db.smooth_scroll = false
+                else
+                    g_frame.db.smooth_scroll = not g_frame.db.smooth_scroll
+                end
+                chat(
+                    "smooth scrolling "
+                        .. (g_frame.db.smooth_scroll and "on" or "off")
+                )
+            end
+            return
+        end
+
+        if lower == "filters" then
+            chat(
+                "filters: "
+                    .. "scope:account|character|local, "
+                    .. "cat:graphics, "
+                    .. "type:number|boolean|enum|text|list|bitfield|serialized, "
+                    .. "has:range|observed|help|default|changed|fav, "
+                    .. "value:<text>, value:=<exact>, and changed. "
+                    .. "/cb regex toggles Lua-pattern search."
+            )
+            return
+        end
+
+        if lower == "undo" or lower == "redo" then
+            step_history(lower)
+            return
+        end
+
+        if lower == "refresh" or lower == "rescan" then
+            refresh()
+            return
+        end
+
+        if lower == "ranges" or lower:match("^ranges%s+") then
+            local only = lower:match("^ranges%s+(.+)$")
+            local names = {}
+            if g_frame.db and type(g_frame.db.observed) == "table" then
+                for name in pairs(g_frame.db.observed) do
+                    if not only or name:lower() == only then
+                        names[#names + 1] = name
+                    end
+                end
+            end
+            sort(names)
+            if #names == 0 then
+                chat("no observed ranges" .. (only and (" for " .. only) or ""))
+                return
+            end
+            chat(
+                format(
+                    "%d observed range%s",
+                    #names,
+                    #names == 1 and "" or "s"
+                )
+            )
+            for _, name in ipairs(names) do
+                local observed = g_frame.db.observed[name]
+                local entry = g_frame.by_name[name]
+                local range = format_observed_range(observed) or "?"
+                local evidence = format_observed_evidence(observed) or "clamp"
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    format(
+                        "  %s: %s [clamp] %s",
+                        name,
+                        range,
+                        evidence
+                    )
+                )
+                if entry and entry.help_range then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        format("    help: %s", entry.help_range)
+                    )
+                end
+            end
+            return
+        end
+
+        if lower == "clearranges" then
+            local count = 0
+            if g_frame.db and type(g_frame.db.observed) == "table" then
+                for _ in pairs(g_frame.db.observed) do
+                    count = count + 1
+                end
+                g_frame.db.observed = {}
+            end
+            chat(
+                format(
+                    "cleared %d observed range%s",
+                    count,
+                    count == 1 and "" or "s"
+                )
+            )
+            refresh()
+            return
+        end
+
+        if lower:match("^clearrange%s+.") then
+            -- Match case-insensitively but echo the stored or typed casing.
+            local clear_name = message_text:match("^%S+%s+(.+)$")
+            local found = nil
+            if g_frame.db and type(g_frame.db.observed) == "table" then
+                for name in pairs(g_frame.db.observed) do
+                    if name:lower() == clear_name:lower() then
+                        g_frame.db.observed[name] = nil
+                        found = name
+                        break
+                    end
+                end
+            end
+            chat(
+                found and ("cleared " .. found)
+                    or ("no observed range for " .. clear_name)
+            )
+            refresh()
+            return
+        end
+
+        if lower == "fav" or lower:match("^fav%s+") then
+            g_frame:Show()
+            local fav_name = lower:match("^fav%s+(%S+)")
+            local entry = g_frame.selected
+            if fav_name then
+                entry = g_frame.by_name[fav_name]
+            end
+            if not entry then
+                chat(
+                    fav_name and ("unknown CVar " .. fav_name)
+                        or "no CVar selected"
+                )
+                return
+            end
+            g_frame.toggle_favorite(entry)
+            local is_favorite = g_frame.db and g_frame.db.favorites[entry.name]
+            chat(
+                entry.name
+                    .. (is_favorite and " added to favorites"
+                        or " removed from favorites")
+            )
+            return
+        end
+
+        if lower == "log" or lower:match("^log%s+") then
+            local log = g_frame.db and g_frame.db.log or {}
+            local argument = lower:match("^log%s+(%S+)")
+            local count = tonumber(argument or "10")
+            local shown = {}
+            if count then
+                for index = max(1, #log - floor(count) + 1), #log do
+                    shown[#shown + 1] = log[index]
+                end
+            else
+                for _, change in ipairs(log) do
+                    if tostring(change.name):lower() == argument then
+                        shown[#shown + 1] = change
+                    end
+                end
+            end
+            if #shown == 0 then
+                chat(
+                    "no logged changes"
+                        .. ((argument and not count) and (" for " .. argument) or "")
+                )
+                return
+            end
+            chat(
+                format(
+                    "%d of %d logged change%s, oldest first",
+                    #shown,
+                    #log,
+                    #log == 1 and "" or "s"
+                )
+            )
+            for _, change in ipairs(shown) do
+                local old_text = tostring(change.old or "")
+                local new_text = tostring(change.new or "")
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    format(
+                        "  %s %s %s: %s -> %s",
+                        date("%Y-%m-%d %H:%M", tonumber(change.time) or 0),
+                        tostring(change.action or "set"),
+                        tostring(change.name),
+                        old_text == "" and "empty" or old_text,
+                        new_text == "" and "empty" or new_text
+                    )
+                )
+            end
+            return
+        end
+
+        if lower == "clearlog" then
+            local count = g_frame.db and #g_frame.db.log or 0
+            if g_frame.db then
+                g_frame.db.log = {}
+            end
+            chat(
+                format(
+                    "cleared %d logged change%s",
+                    count,
+                    count == 1 and "" or "s"
+                )
+            )
+            return
+        end
+
+        if message_text ~= "" then
+            g_frame:Show()
+            -- OnTextChanged rebuilds only when the text changes, so repeat
+            -- the search by hand to reset the list to the top.
+            local unchanged = g_search_box:GetText() == message_text
+            g_search_box:SetText(message_text)
+            if unchanged then
+                rebuild_view()
+            end
+            g_search_box:ClearFocus()
+            local first = g_frame.view[1]
+            if first then
+                select_entry(first)
+                if can_edit(first) then
+                    g_detail_edit:SetFocus()
+                    g_detail_edit:HighlightText()
+                end
+            end
+            return
+        end
+
+        if g_frame:IsShown() then
+            g_frame:Hide()
+        else
+            g_frame:Show()
+        end
+    end
+end

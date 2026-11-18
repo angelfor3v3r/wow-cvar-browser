@@ -37,7 +37,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends lua5.1
 
       - name: Syntax check
-        run: luac5.1 -p CVarBrowser.lua tests/harness.lua
+        run: luac5.1 -p src/*.lua tests/harness.lua
+
+      - name: TOC lists every source file
+        # The harness and the package both follow the TOC, so a file missing
+        # from it would ship untested or not at all.
+        run: |
+          diff <(ls src/*.lua | sort) <(grep -E '\.lua$' CVarBrowser.toc | tr '\\' '/' | sort)
 
       - name: Stub harness
         env:
@@ -67,8 +73,14 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           root="dist/CVarBrowser"
-          mkdir -p "$root/Media"
-          cp CVarBrowser.lua README.md "$root/"
+          mkdir -p "$root/media" "$root/src"
+          cp README.md "$root/"
+          # Ship the Lua files the TOC loads, in their src/ folder.
+          mapfile -t lua_files < <(grep -E '\.lua$' CVarBrowser.toc | tr '\\' '/')
+          (( ${#lua_files[@]} > 0 ))
+          for lua_file in "${lua_files[@]}"; do
+            cp "$lua_file" "$root/$lua_file"
+          done
           # Stamp the tag's version and the build (short commit hash and
           # commit date) into the shipped TOC, and prove it took. The window
           # subtitle shows "v<version> · <hash>" from these two fields.
@@ -78,10 +90,10 @@ jobs:
           grep -qx "## Version: $version" "$root/CVarBrowser.toc"
           grep -qx "## X-Build: $build" "$root/CVarBrowser.toc"
           # Ship only the fonts the addon loads (MEDIA_PATH .. "<file>").
-          mapfile -t fonts < <(grep -o 'MEDIA_PATH \.\. "[^"]*"' CVarBrowser.lua | sed 's/.*"\(.*\)"/\1/' | sort -u)
+          mapfile -t fonts < <(grep -oh 'MEDIA_PATH \.\. "[^"]*"' src/*.lua | sed 's/.*"\(.*\)"/\1/' | sort -u)
           (( ${#fonts[@]} > 0 ))
           for font in "${fonts[@]}"; do
-            cp "Media/$font" "$root/Media/"
+            cp "media/$font" "$root/media/"
           done
           zip="dist/CVarBrowser-$version.zip"
           (cd dist && zip -r -X "${zip#dist/}" CVarBrowser)
@@ -90,10 +102,12 @@ jobs:
       - name: Verify package
         run: |
           set -euo pipefail
-          # The zip must hold one CVarBrowser/ folder with the TOC, Lua, README, and fonts.
-          expected=$(printf '%s\n' CVarBrowser/CVarBrowser.toc CVarBrowser/CVarBrowser.lua \
-            CVarBrowser/README.md; grep -o 'MEDIA_PATH \.\. "[^"]*"' CVarBrowser.lua \
-            | sed 's/.*"\(.*\)"/CVarBrowser\/Media\/\1/' | sort -u)
+          # The zip must hold one CVarBrowser/ folder with the TOC, the Lua
+          # files the TOC lists, README, and fonts.
+          expected=$(printf '%s\n' CVarBrowser/CVarBrowser.toc CVarBrowser/README.md; \
+            grep -E '\.lua$' CVarBrowser.toc | tr '\\' '/' | sed 's/^/CVarBrowser\//'; \
+            grep -oh 'MEDIA_PATH \.\. "[^"]*"' src/*.lua \
+            | sed 's/.*"\(.*\)"/CVarBrowser\/media\/\1/' | sort -u)
           actual=$(unzip -Z1 "$ZIP" | grep -v '/$')
           diff <(sort <<<"$expected") <(sort <<<"$actual")
           unzip -l "$ZIP"

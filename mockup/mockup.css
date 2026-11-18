@@ -1,62 +1,62 @@
 @font-face {
   font-family: "InterLocal";
-  src: url("../Media/Inter-Regular.ttf") format("truetype");
+  src: url("../media/Inter-Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "InterLocal";
-  src: url("../Media/Inter-SemiBold.ttf") format("truetype");
+  src: url("../media/Inter-SemiBold.ttf") format("truetype");
   font-weight: 600;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "IBMPlexLocal";
-  src: url("../Media/IBMPlexSans-Regular.ttf") format("truetype");
+  src: url("../media/IBMPlexSans-Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "IBMPlexLocal";
-  src: url("../Media/IBMPlexSans-SemiBold.ttf") format("truetype");
+  src: url("../media/IBMPlexSans-SemiBold.ttf") format("truetype");
   font-weight: 600;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "ManropeLocal";
-  src: url("../Media/Manrope-Variable.ttf") format("truetype");
+  src: url("../media/Manrope-Variable.ttf") format("truetype");
   font-weight: 200 800;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "SpaceGroteskLocal";
-  src: url("../Media/SpaceGrotesk-Variable.ttf") format("truetype");
+  src: url("../media/SpaceGrotesk-Variable.ttf") format("truetype");
   font-weight: 300 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "JetBrainsMonoLocal";
-  src: url("../Media/JetBrainsMono-Regular.ttf") format("truetype");
+  src: url("../media/JetBrainsMono-Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "NotoSansLocal";
-  src: url("../Media/NotoSans-Regular.ttf") format("truetype");
+  src: url("../media/NotoSans-Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "NotoSansLocal";
-  src: url("../Media/NotoSans-SemiBold.ttf") format("truetype");
+  src: url("../media/NotoSans-SemiBold.ttf") format("truetype");
   font-weight: 600;
   font-style: normal;
   font-display: swap;
@@ -424,6 +424,8 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 }
 .history-head { fill: currentColor; stroke: none; }
 
+/* Popups are fixed-size runtime frames. Offsets below are the runtime's
+   frame offsets minus the 1px border, since CSS positions from inside it. */
 .popup {
   position: absolute;
   top: calc(100% + 4px);
@@ -433,56 +435,35 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   padding: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
-  /* The control row's popups open at y=130 inside the 678px content box, so
-     a 536px cap leaves 12px of air above the window's bottom edge. Overflow
-     scrolls inside the popup with an 8px muted thumb styled like the list
-     scrollbar instead of the browser default. */
-  max-height: 536px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--muted) var(--surface-hover);
 }
-.popup::-webkit-scrollbar { width: 8px; }
-.popup::-webkit-scrollbar-track { background: var(--surface-hover); }
-.popup::-webkit-scrollbar-thumb { background: var(--muted); }
 .popup.align-right { left: auto; right: 0; }
-.popup.center-dialog { left: 50%; right: auto; transform: translateX(-50%); }
 
-.menu-group + .menu-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
-.menu-group-label {
-  display: block;
-  padding: 3px 8px 2px;
-  color: var(--muted);
-  font-size: var(--small-size);
+/* Sort and copy menus are 170x140 (runtime create_popup(170, 140)), with
+   22px rows from 4px below the top edge. */
+.sort-popup, .copy-popup {
+  width: 170px; min-width: 170px; height: 140px;
+  padding: 3px 0 0;
 }
-.menu-row {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; height: 24px; padding: 0 8px;
-  background: transparent; border: 0;
-  color: var(--text); cursor: pointer; text-align: left;
-  font-family: var(--font-ui); font-size: var(--body-size);
-  white-space: nowrap;
+.sort-popup .menu-row, .copy-popup .menu-row { height: 22px; }
+.copy-popup .menu-row { padding-left: 8px; }
+
+/* The filter menu mirrors the runtime's filter_popup: 244 wide and
+   min(500, window height - 136) tall, 500 at the Standard reference. The
+   header stays put and only the rows scroll (filter_scroll, from 30px down
+   and 12px in from the right edge, holding a 220px column of rows). The
+   browser scrollbar is hidden for the runtime's filter_scrollbar: a 6px
+   column 4px in from the right edge, spanning the scroll body, with a 4px
+   surface_hover track centered under a 6px solid muted thumb at least 24px
+   tall. The thumb drags like the list thumb, with no row settle. */
+.filter-popup {
+  width: 244px; min-width: 244px; height: 500px;
+  padding: 0;
+  overflow: hidden;
 }
-.menu-row:hover, .menu-row:focus-visible { background: var(--surface-hover); outline: 0; }
-.menu-row:disabled { opacity: .38; cursor: default; }
-.menu-row:disabled:hover { background: transparent; }
-.menu-row .menu-check {
-  width: 9px; height: 5px; flex: 0 0 auto;
-  border-left: 2px solid var(--accent);
-  border-bottom: 2px solid var(--accent);
-  transform: rotate(-45deg) translate(1px, -2px);
-  opacity: 0;
-}
-.menu-row.checked .menu-check { opacity: 1; }
-.menu-row .menu-note { margin-left: auto; color: var(--muted); font-size: var(--small-size); }
-.menu-row.danger:hover { color: var(--error); }
-.menu-header {
-  display: flex; align-items: center;
-  padding: 2px 8px 4px;
-  color: var(--text); font-size: var(--small-size);
-}
+.menu-header { color: var(--muted); font-size: var(--small-size); }
+.menu-title { position: absolute; left: 7px; top: 7px; line-height: 1.2; }
 .menu-clear {
-  margin-left: auto;
+  position: absolute; top: 4px; right: 5px;
   min-width: 40px; height: 20px; padding: 0 3px;
   background: transparent; border: 1px solid var(--border);
   color: var(--muted); cursor: pointer;
@@ -491,7 +472,63 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 .menu-clear:hover { border-color: var(--accent); color: var(--text); }
 .menu-clear:disabled { opacity: .38; cursor: default; }
 .menu-clear:disabled:hover { border-color: var(--border); color: var(--muted); }
-.menu-sep { display: block; height: 1px; background: var(--border); margin: 4px 2px; }
+.filter-scroll {
+  position: absolute; top: 29px; left: 3px; bottom: 3px; width: 228px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.filter-scroll::-webkit-scrollbar { display: none; }
+.filter-scroll .menu-group { width: 220px; }
+.filter-scroll .menu-group:last-child { padding-bottom: 4px; }
+.filter-scrollbar { position: absolute; top: 29px; right: 3px; bottom: 3px; width: 6px; }
+.filter-scrollbar-track {
+  position: absolute;
+  left: 1px; top: 0; bottom: 0; width: 4px;
+  background: var(--surface-hover);
+}
+.filter-scrollbar-thumb {
+  position: absolute;
+  left: 0; width: 6px;
+  background: var(--muted);
+  cursor: grab;
+}
+.filter-scrollbar-thumb:active { cursor: grabbing; }
+
+/* Group labels take an 18px step with the label 4px in, muted, and no
+   divider between groups. The runtime label row is 20px tall, so the text
+   centers 10px down the step. */
+.menu-group-label {
+  display: block;
+  height: 18px; padding-left: 4px;
+  line-height: 20px;
+  color: var(--muted);
+  font-size: var(--small-size);
+  white-space: nowrap;
+}
+/* Menu rows (runtime create_menu_row): 20px in the filter menu, meta-size
+   labels 24px in, the tick 6px in, and a muted note 6px from the right. */
+.menu-row {
+  position: relative;
+  display: flex; align-items: center; gap: 0;
+  width: 100%; height: 20px; padding: 0 6px 0 24px;
+  background: transparent; border: 0;
+  color: var(--text); cursor: pointer; text-align: left;
+  font-family: var(--font-ui); font-size: var(--small-size);
+  white-space: nowrap;
+}
+.menu-row:hover, .menu-row:focus-visible { background: var(--surface-hover); outline: 0; }
+.menu-row:disabled { opacity: .38; cursor: default; }
+.menu-row:disabled:hover { background: transparent; }
+.menu-row .menu-check {
+  position: absolute; left: 6px; top: 50%; margin-top: -2.5px;
+  width: 9px; height: 5px;
+  border-left: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  transform: rotate(-45deg) translate(1px, -2px);
+  opacity: 0;
+}
+.menu-row.checked .menu-check { opacity: 1; }
+.menu-row .menu-note { margin-left: auto; color: var(--muted); font-size: var(--small-size); }
 
 /* The title-bar size menu mirrors the runtime popup. It is 126px wide with
    22px rows in meta size. The current preset gets the selected row's 2px
@@ -685,11 +722,16 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 .tip-name.readonly { color: var(--muted); }
 .tip-value { font-family: var(--font-data); font-variant-numeric: tabular-nums; -webkit-line-clamp: 4; }
 .tip-default { color: var(--muted); -webkit-line-clamp: 2; }
-.tip-help, .tip-action {
+.tip-help, .tip-action, .tip-detail {
   font-size: var(--small-size);
   line-height: calc(var(--small-size) + 2px);
 }
-.tip-help { margin-top: 4px; -webkit-line-clamp: 8; }
+.tip-help, .tip-detail { margin-top: 4px; -webkit-line-clamp: 8; }
+/* Control tooltips: a body title (2 lines) over a meta detail (8 lines),
+   the row tooltip's name and help slots. Muted marks shortcut lines and the
+   disabled Undo/Redo title. */
+.tip-title { -webkit-line-clamp: 2; }
+.tip-muted { color: var(--muted); }
 
 .empty-state {
   padding: 14px 6px;
@@ -818,6 +860,9 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 .btn:hover { background: var(--surface-hover); border-color: var(--accent); }
 .btn:disabled { opacity: .38; cursor: default; }
 .btn:disabled:hover { background: var(--surface); border-color: var(--border); }
+/* Disabled Undo and Redo still show their tooltips. Letting the pointer fall
+   through to the group keeps the app's pointermove firing over them. */
+.icon-btn:disabled { pointer-events: none; }
 .btn:focus-visible, .close:focus-visible, .size-menu:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;

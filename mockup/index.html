@@ -95,6 +95,7 @@
       <button type="button" data-scenario="favorites">Favorites only</button>
       <button type="button" data-scenario="value">Value filter</button>
       <button type="button" data-scenario="tooltip">Row tooltip</button>
+      <button type="button" data-scenario="control-tooltip">Control tooltip</button>
       <button type="button" data-scenario="default">Default</button>
     </div>
 
@@ -124,7 +125,7 @@
           <input id="search" type="text" placeholder="Search CVars" autocomplete="off" spellcheck="false">
         </label>
 
-        <button type="button" class="chip regex-chip" id="regex-chip" aria-pressed="false" title="Treat the search as a regular expression">.*</button>
+        <button type="button" class="chip regex-chip" id="regex-chip" aria-pressed="false" aria-label="Pattern search">.*</button>
 
         <label class="check">
           <input type="checkbox" id="changed-only">
@@ -141,7 +142,11 @@
             <svg class="chip-icon" viewBox="0 0 10 9" aria-hidden="true"><path d="M0.83 1.5h8.34L6 4.65v2.55L4 7.95V4.65z"></path></svg>
             <span class="chip-label" id="filter-label">Filters off</span>
           </button>
-          <div class="popup filter-popup" id="filter-menu" role="menu" hidden></div>
+          <div class="popup filter-popup" id="filter-menu" role="menu" hidden>
+            <div class="menu-header" id="filter-header"></div>
+            <div class="filter-scroll" id="filter-scroll"></div>
+            <div class="filter-scrollbar" id="filter-scrollbar" hidden><span class="filter-scrollbar-track"></span><span class="filter-scrollbar-thumb" id="filter-scrollbar-thumb"></span></div>
+          </div>
         </div>
 
         <div class="menu-anchor">
@@ -153,10 +158,10 @@
         </div>
 
         <div class="history-controls" role="group" aria-label="History">
-          <button type="button" class="btn icon-btn" id="undo-button" title="Undo (Ctrl+Z)" aria-label="Undo">
+          <button type="button" class="btn icon-btn" id="undo-button" aria-label="Undo">
             <svg class="history-icon" viewBox="0 0 12 12" aria-hidden="true"><g transform="translate(.55 -.15)"><path d="M9 2.5v3a2.5 2.5 0 0 1-2.5 2.5H4.4"></path><path class="history-head" d="M4.8 6.2 1.9 8l2.9 1.8z"></path></g></svg>
           </button>
-          <button type="button" class="btn icon-btn" id="redo-button" title="Redo (Ctrl+Y)" aria-label="Redo">
+          <button type="button" class="btn icon-btn" id="redo-button" aria-label="Redo">
             <svg class="history-icon" viewBox="0 0 12 12" aria-hidden="true"><g transform="translate(-.55 -.15)"><path d="M3 2.5v3a2.5 2.5 0 0 0 2.5 2.5h2.1"></path><path class="history-head" d="M7.2 6.2 10.1 8l-2.9 1.8z"></path></g></svg>
           </button>
         </div>

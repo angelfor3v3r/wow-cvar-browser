@@ -23,7 +23,7 @@ below incorporates that critique.
 - Textures and FontStrings only; 1px borders are drawn with textures.
 - Runtime fonts: NotoSans-Regular/SemiBold for chrome and data,
   Inter-SemiBold (`FONT_CHECK`) for the ✓ ↩ ↪ glyphs only. Bundled in
-  `Media/`. No bundled font has ★ U+2605, ☆ U+2606, ✦ U+2726, or ♥ U+2665
+  `media/`. No bundled font has ★ U+2605, ☆ U+2606, ✦ U+2726, or ♥ U+2665
   (checked with fontTools), so the favorite mark is drawn from 1px
   textures, like the funnel and sort icons. Inter's ◆ U+25C6 / ◇ U+25C7
   were rejected: glyph ink drifts with font metrics (the undo/redo offsets
@@ -251,8 +251,8 @@ across rows. Domain is the union of help and observed bounds.
 - **Regex toggle**: compact `.*` chip flush against the search box (the search
   row is 300px wide to make room). Off = muted; on = accent text and border
   with a 2px accent underline along the chip's bottom edge. Underline, not
-  fill: it is a mode of the search box, not a filter. Tooltip states the
-  behavior.
+  fill: it is a mode of the search box, not a filter. Its tooltip states the
+  mode and what the search does in it (see Control tooltips).
 - **Changed only**: custom 18px checkbox with drawn tick; whole row clickable.
   The button is a borderless hit area — [18px box][8px gap][`Changed only`]
   text — and the tick sits 1px right of the box's geometric center (the
@@ -274,11 +274,15 @@ across rows. Domain is the union of help and observed bounds.
     text run with an ordinary space, no separate summary slot. Width is
     `18 + label + 6` (6px right padding), 80px minimum. The label is `text`
     and the glyph `muted` at rest; with filters on, label, glyph, and border
-    all turn accent. Hover raises only the fill and border. Tooltip
-    lists the active facets as `scope:account, has:changed`. Click opens the
-    filter menu below the chip.
-  - **Filter menu**: popup panel (`surface`, 1px border, no radius),
-    grouped rows with 11px muted group labels — Scope (All / Account /
+    all turn accent. Hover raises only the fill and border. Its tooltip
+    lists the active facets as `scope:account, has:changed` (see Control
+    tooltips). Click opens the filter menu below the chip.
+  - **Filter menu**: a fixed 244px-wide popup panel (`surface`, 1px
+    border, no radius), `TOPLEFT` on the chip's `BOTTOMLEFT`, 4px down.
+    The header is a muted meta-size `Filters` at (8, −8) with a
+    **Clear all** button (20px tall, snug label, 40px floor) at `TOPRIGHT`
+    (−6, −5). Below it the rows are grouped under muted meta-size group
+    labels, 4px in, with no divider between groups — Scope (All / Account /
     Character / Local), Category (All + the categories present in the
     list), Type (All / Number / Text / Boolean / Enum / List / Bitfield /
     Serialized, a fixed list; see Value type), Has (Range / Observed
@@ -287,33 +291,53 @@ across rows. Domain is the union of help and observed bounds.
     of the data; it reads `has:favorite` in the chip tooltip, the same
     filter as typing `has:fav`. Scope, category,
     and type are single-select; Has is multi-select and ANDs. Checked rows
-    show the same drawn tick as the checkbox. The header reads `Filters`
-    with a right-aligned **Clear all** button (disabled when nothing is
-    active); Clear all resets the four facets and Changed only, not the
+    show the same drawn tick as the checkbox. Clear all is disabled when
+    nothing is active; it resets the four facets and Changed only, not the
     search text or regex mode. Menu stays open while toggling so several
     facets can be set in one pass; its scroll position holds across
     re-renders so a toggle never yanks the list back to the top.
-  - **Popup height rule**: no popup may exceed the window. The control
-    row's menus open at y=130 in the 678px content box and are capped at
-    536px tall (12px of air above the window edge); taller content — the
-    filter menu at its natural ~710px — scrolls inside the panel over an
-    8px muted thumb in the list-scrollbar language. The wheel glides the
-    panel 40px per notch (see Scrolling). The control row's menu
-    rows are a fixed 24px with nowrap labels, so reachability is identical
-    at 13/14/15/16 text sizes: the Has group always ends up behind the same
-    ~174px of scroll and every row is reachable in all cases. Opening upward
-    is not an option — the control row sits near the window's top edge.
+  - **Menu rows** (filter, sort, and copy): full-width hit rows with a
+    `surface_hover` fill on hover, a meta-size `text` label 24px in (8px
+    in the copy menu, which has no ticks), the accent tick 6px in, and a
+    muted note 6px from the right edge. Disabled rows sit at 38% opacity.
+    Filter rows are 20px; each group label takes an 18px step (its 20px
+    label row centers the text 10px down the step).
+  - **Popup height rule**: no popup may exceed the window. The filter
+    menu is `min(500, window height − 136)` tall — 464 at Compact, 500 at
+    Standard and Large. It opens at y=124 (chip bottom at 120 plus 4), so
+    its bottom is at most 12px above the window's bottom edge (588 of 600
+    at Compact, 624 of 680 at Standard, 624 of 760 at Large). The
+    `Filters` header stays fixed and only the rows scroll, in a scroll body
+    from (4, −30) to (−12, 4) holding a 220px column of rows. Its own
+    scrollbar sits in a 6px column 4px in from the right edge, spanning the
+    scroll body: a 4px `surface_hover` track centered in the column under a
+    6px solid `muted` thumb. The bar shows only when the rows overflow by
+    more than 1px. Thumb height is `floor(viewport² / (range + viewport))`,
+    at least 24px, and its top maps the offset over the column's free
+    travel. The wheel glides the rows 40px per notch anywhere over the
+    panel, header included, and the thumb drags (see Scrolling). Row
+    content is `72 + 20 × (19 + categories) + 4` px (four 18px labels, 4
+    scope, 1 + categories, 8 type, and 6 Has rows, 4px below the last).
+    The mock's 5 categories make 556px against a 466px viewport at
+    Standard: a 90px range and a 390px thumb, with the last four Has rows
+    behind the scroll. At Compact the viewport is 430px, the range 126px,
+    and the thumb 332px. Rows are fixed heights with nowrap labels, so
+    reachability is identical at every text size. Opening upward is not an
+    option — the control row sits near the window's top edge.
   - **Sort chip**: 10×10 sort glyph at 4px from the chip's left edge + one
     label string at x=18 (icon + 4px gap): `Sort <key> <dir>`, e.g.
     `Sort name asc` or `Sort changed desc`, a single text run with ordinary
     spaces. Width is `18 + label + 6`, 100px minimum. Colors follow the
     Filters chip: `text` label and `muted` glyph at the default sort (name
     asc); label, glyph, and border accent otherwise. Click opens the sort
-    menu: Name, Type, Scope,
-    Category, Changed, Range width — the six keys of `/cvars sort`. The
-    active row is ticked and its direction shown in a muted trailing note.
+    menu: a fixed 170×140 popup `TOPLEFT` on the chip's `BOTTOMLEFT`, 4px
+    down, with six 22px rows from 4px below its top edge — Name, Type,
+    Scope, Category, Changed, Range width, the six keys of `/cvars sort`.
+    The active row is ticked and its direction shown in a muted trailing
+    note.
   - **Undo / Redo**: two snug icon buttons (24×26px minimum) carrying the
-    undo/redo arrows and tooltips with the shortcuts. The arrow glyphs sit
+    undo/redo arrows. Their tooltips name the CVar and the shortcut, disabled
+    buttons included (see Control tooltips). The arrow glyphs sit
     1px left and 2px below the button's center — the arrow ink sits
     top-right in its em box — and the mockup's 12×12 SVG marks carry the
     same offset from the button's center (a font glyph's ink center moves
@@ -323,8 +347,10 @@ across rows. Domain is the union of help and observed bounds.
     Redo is disabled with an empty redo stack. A Set or Reset clears the
     redo stack. Undo/redo restore the previous/next value of the edited
     CVar and select its row.
-  - **Copy**: `Copy` button opening a compact menu — Copy value, Copy raw
-    value, Copy default, Copy name, Copy help, Copy range — mirroring
+  - **Copy**: `Copy` button opening a fixed 170×140 menu `TOPLEFT` on the
+    button's `BOTTOMLEFT`, 4px down, with six 22px rows from 4px below its
+    top edge — Copy value, Copy raw value, Copy default, Copy name, Copy
+    help, Copy range — mirroring
     `/cvars copy`. `value` is the text the value field edits (hex for
     serialized and bitfield values); `raw` is the stored string. Help/range
     rows are disabled with a muted `none` note when the CVar has none. The
@@ -340,8 +366,9 @@ across rows. Domain is the union of help and observed bounds.
     `text` color. It holds the copied text focused and fully highlighted —
     highlight `accent` at 35% — with the caret at the start, so long text
     shows its beginning. The status line
-    reads `Press Ctrl+C to copy <field>: <cvar name>`, where field is the
-    `/cvars copy` key (`value`, `raw`, `default`, `name`, `help`, `range`).
+    reads `Press Ctrl+C to copy the <field> of <cvar name>`, where field is
+    the Copy menu's wording of the `/cvars copy` key: `value`, `raw value`,
+    `default`, `name`, `help text`, or `range`.
     Escape, Enter, or losing focus closes it, and closing the menus closes
     it too. Typing changes nothing: the text snaps back and stays
     highlighted. A field with no text (a blank default) opens no box; the
@@ -450,8 +477,9 @@ across rows. Domain is the union of help and observed bounds.
     of the window's bottom edge, anchor it above instead: `BOTTOMLEFT` on
     the row's `TOPLEFT` at (14, 4). If that would come within 8px of the
     window's top edge too, keep it below.
-  - **Timing**: shows after the pointer rests 0.5s on a target (a row, or
-    a row's favorite toggle as a separate target). Moving inside the
+  - **Timing**: shows after the pointer rests 0.5s on a target (a row, a
+    row's favorite toggle as a separate target, or a control with a
+    tooltip, see Control tooltips). Moving inside the
     target never restarts the delay. Warm handoff: while the panel is up,
     or within 0.1s after it hid because the pointer left a row, the next
     target shows at once. Hides warm on `OnLeave` with no new target.
@@ -462,6 +490,67 @@ across rows. Domain is the union of help and observed bounds.
     (wheel, glide, keyboard navigation, thumb drag) hides it cold and
     restarts the 0.5s for the row now under the pointer, so it returns
     once the list comes to rest; nothing arms during a thumb drag.
+- **Control tooltips**: the regex chip, Filters chip, Undo, and Redo show
+  the row tooltip's panel (`g_frame.tooltip`): the same frame, fill, border,
+  strata, clamping, mouse-disabled state, 8px insets, and sizing rule
+  (text width W = min(320, ceil(widest unwrapped line)), panel W + 16).
+  Never `GameTooltip`, never a second panel, and only one tooltip is ever
+  up. No other control gets one: Sort, Copy, Changed only, Size, and close
+  already say what they do in their labels.
+  - **Lines**: two of the row tooltip's slots, the others hidden:
+
+    | Line | Slot | Font | Max lines | Gap above |
+    | --- | --- | --- | --- | --- |
+    | Title | row line 1 (name) | `FONT_BODY` | 2 | — |
+    | Detail | row line 4 (help) | `FONT_META` | 8 | 6 |
+
+  - **Text**, built at show time:
+
+    | Control | State | Title (color) | Detail (color) |
+    | --- | --- | --- | --- |
+    | Regex chip | off | `Pattern search off` (`text`) | `Search words match as plain text. Click to read the search as a Lua pattern, such as ^nameplate or quality$.` (`text`) |
+    | Regex chip | on | `Pattern search on` (`text`) | `The search is one Lua pattern, such as ^nameplate or quality$. Terms like scope:account still filter, and an invalid pattern matches nothing.` (`text`) |
+    | Filters chip | no menu facet (`Filters off`) | no tooltip; the chip is not a target | — |
+    | Filters chip | `Filters N` | `Active filters` (`text`) | the facet terms (`text`) |
+    | Undo | history not empty | `Undo <name>` (`text`) | `Ctrl+Z` (`muted`) |
+    | Undo | disabled | `Nothing to undo` (`muted`) | `Ctrl+Z` (`muted`) |
+    | Redo | redo stack not empty | `Redo <name>` (`text`) | `Ctrl+Y or Ctrl+Shift+Z` (`muted`) |
+    | Redo | disabled | `Nothing to redo` (`muted`) | `Ctrl+Y or Ctrl+Shift+Z` (`muted`) |
+
+    "Pattern search" is the `/cvars regex` chat wording; the runtime
+    matches Lua patterns, not regular expressions, so the tooltip says so.
+    `<name>` is the stack top's stored CVar name
+    (`undo_stack[#undo_stack].name`, `redo_stack[#redo_stack].name`), the
+    CVar the click would change. No value: binary values are long hex.
+  - **Facet terms**: exactly the N facets `Filters N` counts, as search
+    terms joined by `", "`, in menu order: `scope:<s>`, `category:<c>`,
+    `type:<t>`, then `has:<facet>` in Has row order (range, observed, help,
+    default, changed, favorite; walk that fixed list, `filters.has` is an
+    unordered set). Values are the stored lowercase filter keys, e.g.
+    `scope:account, category:graphics, type:number, has:changed` (a
+    trailing `, has:favorite` with Favorite ticked). Changed only is not
+    listed: it is not a menu facet, is
+    not counted in N, and shows its own tick beside the chip. Terms typed
+    into the search box are not listed either. The list wraps at the 320
+    width on its spaces; even all nine terms stay well inside the 8-line
+    cap.
+  - **Anchor**: placed once per show. Panel `TOPLEFT` on the control's
+    `BOTTOMLEFT` at (0, −4): it shares the control's left edge with a 4px
+    gap, like the copy box under Copy. Always below, no flip: every
+    tooltip control sits in the top 120px of the window.
+  - **Timing**: one timer for rows and controls. Each control is a target:
+    `OnEnter` requests it (0.5s delay), `OnLeave` hides warm, and the 0.1s
+    warm handoff spans rows and controls, so Undo to Redo swaps at once.
+    Hides cold, under the row rules (popup or copy box opening, list
+    rebuild, list scroll, window hiding) plus: a mouse down on an enabled
+    control (it returns only after the pointer leaves the control and comes
+    back), and any undo or redo from the button, shortcut, or `/cvars`.
+    It never shows while a popup is open, so the Filters chip's tooltip
+    never covers its open menu. A list scroll does not re-arm a control.
+  - **Disabled Undo/Redo**: still targets, so both buttons get
+    `SetMotionScriptsWhileDisabled(true)`. Their hover visuals stay off
+    while disabled (no fill or border change), and a click on a disabled
+    button does nothing and keeps the tooltip up.
 - **Gauge column**: 88px gauge centered in the middle column.
 - **Value column**: current value in text; changed rows append a muted
   `(Default: N)`, no strikethrough; a blank default reads `(Default: empty)`.
@@ -500,6 +589,11 @@ across rows. Domain is the union of help and observed bounds.
   combat` in `warning`. Empty parts are skipped. Range help and Help range
   never appear together, so the fullest line is exactly 8 parts: nothing
   caps it lower, and the Secure part is never dropped.
+  The observed evidence lists the max part, then the min part, joined by
+  `, `. Each reads `<bound> <value> (<notes>)`, where the notes are
+  `asked <requested>`, then `was <previous>` when the earlier value
+  differed, then `<N>x` when the bound was seen more than once, joined by
+  `, `: `max 2.6 (asked 5, was 1.9, 3x), min 0.5 (asked 0)`.
 - **Value type**: one inferred type drives the meta line's `Type:` part,
   the Type filter (`type:` term), and the type sort. The first rule that
   matches wins: Bitfield (a known bitfield CVar, `closedInfoFrames`),
@@ -513,7 +607,31 @@ across rows. Domain is the union of help and observed bounds.
   seconds after it appears. A new message replaces the old one and restarts
   the 30s; an empty message clears immediately. Expiry is uniform on
   purpose: the status line reports what just happened, it never holds state
-  that outlives the next look.
+  that outlives the next look. Text never uses semicolons, and colons
+  appear only as labels. Values show as the value field would edit them
+  (hex for bitfield and serialized values). Messages, in the order Set
+  checks them:
+
+  | Case | Status | Tone |
+  | --- | --- | --- |
+  | Read-only | `This CVar is read-only.` | error |
+  | Locked | `This CVar is locked.` | error |
+  | Secure, in combat | `Secure CVars can't change in combat.` | error |
+  | Bad hex | `Bitfield and serialized values take hex with an even number of digits.` | error |
+  | SetCVar raised an error | `SetCVar error: <message>` | error |
+  | SetCVar returned false | `SetCVar refused it (read-only, secure, or invalid).` | error |
+  | Refused (no result, value unchanged) | `<cvar> refused it and stays <value> (read-only, secure, or invalid)` | error |
+  | Value unreadable | `Set <cvar>, but its value could not be read back` | warning |
+  | Accepted | `Set <cvar> = <value>` | success |
+  | Ignored | `<cvar> ignored it and stays <value>` | error |
+  | Clamped | `<cvar> clamped to <value> (asked <value>)` | warning |
+  | Normalized | `<cvar> normalized to <value>` | warning |
+  | Undo / redo | `Undid <cvar> to <value>` / `Redid <cvar> to <value>` | success |
+  | Undo / redo failed | `Undo of <cvar> was refused`, `Undo of <cvar> did not stick` (Redo alike) | error |
+
+  Reset fills in the default and runs the Set path, so an accepted reset
+  reads `Set <cvar> = <default>`. Selecting a secure CVar in combat shows
+  `Secure CVars can't change in combat.` in `warning` before any Set.
 - **Semantic key**: glossary marks with plain-language labels, in the
   row's left-to-right order: filled favorite diamond (the toggle's 7×7
   pixels, all 17 textures in `text`) = favorite; changed lilac text =
@@ -545,6 +663,7 @@ across rows. Domain is the union of help and observed bounds.
 | Not favorite, hovered or selected | hollow 7×7 diamond in `muted` |
 | Pointer over favorite toggle | diamond (filled or hollow) in `accent`; row keeps its hover fill |
 | Row tooltip | `surface` panel, 1px `border`, under the row with its text at the name's x=22 (above near the window bottom) |
+| Control tooltip | same panel, 4px under the regex chip, Filters chip, Undo, or Redo, sharing its left edge; body title over a meta detail |
 | Help range | 3px muted ticks; meta `Range help` |
 | Observed range | 6px muted-teal ticks; meta `Observed` in teal |
 | Open bound | slanted end at that side (no limit) |
@@ -554,15 +673,15 @@ across rows. Domain is the union of help and observed bounds.
 | Read-only | muted name; input/Set/Reset disabled; meta `Read-only`; hollow key mark |
 | Locked | input/Set/Reset disabled; meta `Locked`; name keeps its color |
 | Secure | meta `Secure: locked in combat` in warning, in and out of combat |
-| Secure in combat | Set/Reset disabled; warning status |
+| Secure in combat | Set/Reset disabled; warning status `Secure CVars can't change in combat.` |
 | Selected changed row | accent selection bar; changed name stays changed lilac |
-| Filters active | Filters chip label `Filters N`, glyph, and border in accent; tooltip lists facets |
+| Filters active | Filters chip label `Filters N`, glyph, and border in accent; tooltip `Active filters` over the facet terms |
 | Sort non-default | Sort chip label, glyph, and border in accent |
 | Regex on | `.*` chip accent text/border with accent bottom underline |
-| Undo/redo unavailable | icon button at 38% opacity, no hover, no click |
+| Undo/redo unavailable | icon button at 38% opacity, no hover, no click; tooltip `Nothing to undo` / `Nothing to redo` in muted |
 | Copy unavailable | Copy button disabled (no selection) |
 | Copy field missing | menu row disabled with muted `none` note |
-| Copy box open | 280×30 box under Copy, `accent` border, text highlighted; status `Press Ctrl+C to copy <field>: <cvar>` |
+| Copy box open | 280×30 box under Copy, `accent` border, text highlighted; status `Press Ctrl+C to copy the <field> of <cvar>` |
 | Empty result set | muted empty-state line in the list; count `0 / N CVars` |
 | Menu open | popup below its chip or box; the opener keeps its accent border while open |
 | Favorites filter | Has `Favorite` ticked; Filters chip counts it; tooltip lists `has:favorite` |
@@ -600,15 +719,20 @@ across rows. Domain is the union of help and observed bounds.
   facets in the filter menu is equivalent to typing the same
   `scope:`/`type:`/`has:` terms, and both routes combine into one filter
   set. The regex chip switches the search box between literal and
-  regular-expression matching (an invalid pattern simply matches nothing).
+  Lua-pattern matching (an invalid pattern simply matches nothing).
 - Keyboard: Up/Down move the selection one row, PageUp/PageDown one page
   (the whole rows the list shows, `floor(list height / 22)`, 15 at
   Standard), Home/End to the first or last result. The selected row glides
   to the top of the list (see Scrolling). In the search box Up/Down and
   PageUp/PageDown navigate while Home/End stay with the caret. With no
   edit box focused, all six navigate while the cursor is over the window,
-  out of combat (in combat every key passes through to the game); any
-  other key passes through. Enter in the search box selects the row
+  out of combat (in combat every key passes through to the game). The
+  undo/redo shortcuts follow the same rule: Ctrl+Z undoes, Ctrl+Y or
+  Ctrl+Shift+Z redoes, only with no edit box focused, out of combat, and
+  the cursor over the window; Alt held passes them through. With nothing
+  to undo or redo the key is still taken and does nothing, like the
+  disabled button (no chat, no status). Any other key passes through.
+  Enter in the search box selects the row
   picked with the navigation keys — or, with none since the search text
   last changed, the first result — then focuses the value field (unless
   the CVar is read-only, locked, or secure in combat). With no results
@@ -637,9 +761,11 @@ across rows. Domain is the union of help and observed bounds.
   physical screen height (see Size presets).
 - Undo/redo: every accepted Set or Reset pushes one history entry and
   clears the redo stack. Undo restores the previous value (selecting that
-  row); redo re-applies it. Disabled buttons cannot fire. Shortcuts:
-  Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z — not intercepted while an edit box has
-  focus, so native text undo keeps working.
+  row); redo re-applies it. The status line and chat say `Undid <cvar> to
+  <value>` or `Redid <cvar> to <value>`. Disabled buttons cannot fire.
+  Shortcuts: Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, under the Keyboard rule (no edit box
+  focused, out of combat, cursor over the window), so an edit box keeps
+  its own keys.
 - Copy: a menu row closes the menus and opens the copy box holding the
   selected CVar's value, raw value, default, name, help, or range text; the
   status line asks for Ctrl+C. Disabled with no selection.
@@ -648,8 +774,8 @@ across rows. Domain is the union of help and observed bounds.
   position. The hidden state persists for the session.
 - Bitfield and serialized values edit as hex in the value field: two
   uppercase digits per byte, so status lines show hex too. Set ignores
-  whitespace; an odd-length or non-hex entry fails with `Bitfield/serialized
-  value must be an even-length hex string.`
+  whitespace; an odd-length or non-hex entry fails with `Bitfield and
+  serialized values take hex with an even number of digits.`
 - Click a row to select it; click its favorite cell to toggle the favorite
   without selecting it. Edit the value; Enter or Set applies.
 - Wheel and scrollbar scroll the list (see Scrolling); the scrollbar thumb
@@ -667,9 +793,12 @@ offset, list and filter popup, smooth or not, is a whole pixel.
   same requests jump straight to the target.
 - **List wheel**: 3 rows (66px) per notch. Each notch adds onto the pending
   target rather than the current offset, so a fast spin accumulates.
-- **Thumb drag**: the list follows the thumb 1:1 while held, with no
-  easing. On release it glides to the nearest whole row (a multiple of
-  22px, clamped into the range).
+- **Thumb drag**: while held, a thumb follows the cursor 1:1 in whole
+  units of its scroll range, with no easing (the travel and range are
+  measured at the press). The list and the filter popup drag the same way.
+  On release the list glides to the nearest whole row (a multiple of 22px,
+  clamped into the range). The filter popup has no settle: its rows stay
+  where the thumb was let go.
 - **Navigation keys** (Up/Down/PageUp/PageDown/Home/End, see Keyboard):
   glide so the newly selected row sits at the top of the list, clamped at
   the bottom of the range.
@@ -720,15 +849,18 @@ blocks local font loading from file URLs). Controls:
   - *Row tooltip*: search `realm`, with the tooltip held open on
     `realmList` (long wrapped value and help) until the pointer reaches the
     list.
+  - *Control tooltip*: the Active filters facets, with the Filters chip
+    tooltip held open (`Active filters` over `scope:account, type:number,
+    has:changed`) until the pointer reaches a control or the list.
   - *Default*: everything at rest.
-- Favorites, the tooltip, and the keyboard keys are live: hover a row for
-  0.5s, click a favorite cell, or press the navigation keys with the
-  pointer over the window.
+- Favorites, the tooltips, and the keyboard keys are live: hover a row or
+  a tooltip control for 0.5s, click a favorite cell, or press the
+  navigation keys or undo/redo shortcuts with the pointer over the window.
 
 The mockup has no external dependencies. It is intentionally interactive:
 Set, Reset, clamp, ignored, read-only, search, regex, filter, sort,
 undo/redo, copy, size, and scrollbar states can be exercised
-without touching `CVarBrowser.lua`.
+without touching the Lua in `src/`.
 
 ## Implementation notes
 

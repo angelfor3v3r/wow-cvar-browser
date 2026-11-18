@@ -52,7 +52,7 @@ Search, inspect, edit, and reset every console variable the WoW Forever client e
 
 The second row of controls mirrors the slash commands. `Filters` opens a popup for scope, category, type, and Has facets. `Sort` picks a sort key and direction. Next come undo and redo, then `Copy`. The `.*` chip toggles regex search, and the `Size` menu in the title bar picks Auto, Compact, Standard, or Large. The minimap button can only be hidden or reset from chat (`/cvars minimap [reset]`).
 
-Status messages clear after 30 seconds, and a new message restarts the timer. The `Filters` chip shows how many facets are active, and its popup has `Clear all`.
+Status messages clear after 30 seconds, and a new message restarts the timer. The `Filters` chip shows how many facets are active, and its popup has `Clear all`. Hover the `.*` chip or undo and redo for a tooltip. The undo and redo tooltips name the CVar they would change. The `Filters` chip has a tooltip while a facet is on, and it lists the active facets.
 
 You can type filters into the search box and combine them:
 
@@ -68,7 +68,7 @@ Bitfield and serialized values show as `Bitfield (N bytes)` or `Serialized (N by
 
 In the search box, Up and Down move the selection by one row and PageUp and PageDown move it by a page. Enter selects that row (or the first match) and focuses the value field. Escape clears the search text first, and a second Escape leaves the box.
 
-When no text box has focus and the cursor is over the window, Up, Down, PageUp, PageDown, Home, and End move the selection. Escape closes an open menu, then clears the search, then closes the window. Every other key reaches the game as usual, and in combat the window lets every key through.
+When no text box has focus and the cursor is over the window, Up, Down, PageUp, PageDown, Home, and End move the selection, Ctrl+Z undoes, and Ctrl+Y or Ctrl+Shift+Z redoes. Escape closes an open menu, then clears the search, then closes the window. Every other key reaches the game as usual, and in combat the window lets every key through.
 
 ## Change log
 
@@ -80,9 +80,11 @@ The client has no public table of CVar minimum and maximum values. The addon rea
 
 ## Development
 
-`mockup/index.html` is the standalone visual mock. Serve the repository folder over HTTP and open `/mockup/`, because the mock loads fonts from `Media/` and won't work from a `file:` URL. `DESIGN.md` holds the visual specification.
+`mockup/index.html` is the standalone visual mock. Serve the repository folder over HTTP and open `/mockup/`, because the mock loads fonts from `media/` and won't work from a `file:` URL. `DESIGN.md` holds the visual specification.
 
-`lua tests/harness.lua` (Lua 5.1, run from the repository folder) loads the addon against headless WoW API stubs. It checks loading, scanning, set/clamp/reset, undo/redo, read-only and in-combat secure selection, slash commands, copy, pattern search, smooth scrolling, the pixel-locked drag, and main-chunk register headroom, and it exits non-zero on failure. Pixel-level visuals still need an in-game `/reload`.
+`lua tests/harness.lua` (Lua 5.1, run from the repository folder) loads every Lua file the TOC lists, in order, against headless WoW API stubs. It checks loading, scanning, set/clamp/reset, undo/redo and their shortcuts, the change log, read-only, locked, and in-combat secure selection, slash commands, copy, pattern and value search, favorites, row and control tooltips, keyboard navigation, smooth scrolling and scrollbar drags, the pixel-locked drag, and register headroom in each file, and it exits non-zero on failure. Pixel-level visuals still need an in-game `/reload`.
+
+The addon's Lua lives in `src/`, one file per part of the window, and the TOC loads the files in dependency order. Files share code through the addon namespace. A new file has to be added to the TOC too, and CI checks that the two match.
 
 CI (`.github/workflows/ci.yml`) runs `luac -p` and the harness on every push to `main` and on every pull request. To cut a release, push a tag:
 
@@ -91,6 +93,6 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Tags must be `vMAJOR.MINOR.PATCH` with no leading zeros. Once the tests pass, CI writes the version and an `X-Build` line (short commit hash and commit date) into the TOC, builds `CVarBrowser-<version>.zip`, and publishes a GitHub release with generated notes. The zip has a single `CVarBrowser/` folder holding the TOC, `CVarBrowser.lua`, `README.md`, and only the fonts the addon loads from `Media/`. Releases are immutable once published, so a tag name can't be reused even after its release is deleted, and `v*` tags can't be moved.
+Tags must be `vMAJOR.MINOR.PATCH` with no leading zeros. Once the tests pass, CI writes the version and an `X-Build` line (short commit hash and commit date) into the TOC, builds `CVarBrowser-<version>.zip`, and publishes a GitHub release with generated notes. The zip has a single `CVarBrowser/` folder holding the TOC, the Lua files in `src/`, `README.md`, and only the fonts the addon loads from `media/`. Releases are immutable once published, so a tag name can't be reused even after its release is deleted, and `v*` tags can't be moved.
 
 The checked-in TOC always says `## Version: dev` (CI checks this). The window's subtitle shows `WoW Forever · v1.0.1 · afaa9bd` for a release build and `WoW Forever · dev` for a copy of the repository.

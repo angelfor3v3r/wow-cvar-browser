@@ -1,4 +1,4 @@
--- Headless WoW API stub harness for CVarBrowser.lua.
+-- Headless WoW API stub harness for the CVar Browser addon.
 --
 -- Run it from the addon folder with `lua tests/harness.lua`. It exits
 -- non-zero if any check fails. It covers load, ADDON_LOADED, scan,
@@ -9,7 +9,33 @@
 -- visuals still need an in-game /reload and /cvars.
 
 local SCRIPT_DIR = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
-local ADDON_PATH = SCRIPT_DIR .. "/../CVarBrowser.lua"
+local ADDON_DIR = SCRIPT_DIR .. "/.."
+
+-- The Lua files in the order the TOC loads them.
+local ADDON_FILES = {}
+for line in io.lines(ADDON_DIR .. "/CVarBrowser.toc") do
+    local file = line:match("^([^#%s][^\r]-%.lua)%s*$")
+    if file then
+        ADDON_FILES[#ADDON_FILES + 1] = ADDON_DIR .. "/" .. (file:gsub("\\", "/"))
+    end
+end
+
+-- Runs every TOC file in order with one shared namespace, as the client
+-- does. Returns false and the error when a file fails to load or run.
+local function load_addon()
+    local namespace = {}
+    for _, path in ipairs(ADDON_FILES) do
+        local chunk, load_err = loadfile(path)
+        if not chunk then
+            return false, load_err
+        end
+        local ok, run_err = pcall(chunk, "CVarBrowser", namespace)
+        if not ok then
+            return false, path .. ": " .. tostring(run_err)
+        end
+    end
+    return true, nil
+end
 
 -- Physical px per frame unit that the stubs produce. measure_px_per_unit
 -- reads GetScaledRect width (equal to GetWidth here) * physical height /
@@ -124,6 +150,11 @@ function g_methods:Enable() self._enabled = true end
 function g_methods:Disable() self._enabled = false end
 function g_methods:SetEnabled(enabled) self._enabled = enabled and true or false end
 function g_methods:IsEnabled() return self._enabled end
+function g_methods:Click()
+    if self._enabled then
+        fire_script(self, "OnClick", "LeftButton")
+    end
+end
 function g_methods:SetPropagateKeyboardInput(propagate)
     self._propagate = propagate
 end
@@ -222,6 +253,10 @@ _G.GetCursorPosition = function() return g_cursor_x, g_cursor_y end
 _G.GetPhysicalScreenSize = function() return PHYSICAL_WIDTH, PHYSICAL_HEIGHT end
 local g_mouse_down = true
 _G.IsMouseButtonDown = function() return g_mouse_down end
+local g_ctrl_down, g_shift_down = false, false
+_G.IsControlKeyDown = function() return g_ctrl_down end
+_G.IsShiftKeyDown = function() return g_shift_down end
+_G.IsAltKeyDown = function() return false end
 local g_timers = {}
 _G.C_Timer = {
     After = function(delay, callback)
@@ -287,7 +322,7 @@ _G.C_CVar = {
     GetCVarInfo = function(name)
         local cvar = g_by_name[name]
         if cvar then
-            return cvar.value, cvar.default, false, true, false,
+            return cvar.value, cvar.default, false, true, cvar.locked == true,
                 cvar.secure == true, cvar.readonly == true
         end
     end,
@@ -356,8 +391,8 @@ end
 -- Load -----------------------------------------------------------------------
 
 do
-    local chunk = assert(loadfile(ADDON_PATH))
-    local load_ok, load_err = pcall(chunk, "CVarBrowser", {})
+    check(#ADDON_FILES > 1, "the TOC lists the addon's Lua files: " .. #ADDON_FILES)
+    local load_ok, load_err = load_addon()
     check(load_ok, "addon load: " .. tostring(load_err))
     if not load_ok then
         io.stderr:write(g_failures, " failure(s)\n")
@@ -449,6 +484,55 @@ do
     local calls_before = #g_set_calls
     fire_script(g_set_button, "OnClick")
     check(#g_set_calls == calls_before, "Set does not call SetCVar for read-only")
+end
+
+-- Locked CVar ----------------------------------------------------------------
+
+do
+    g_by_name.graphicsQuality.locked = true
+    slash("refresh")
+    g_last_focus = nil
+    slash("graphicsQuality")
+    check(g_last_focus == nil, "/cvars <name> does not focus a locked CVar's value field")
+    local search_box = find_widget(function(w)
+        return w._kind == "EditBox" and w._scripts.OnKeyDown ~= nil
+    end)
+    g_last_focus = nil
+    search_box:SetText("graphicsQuality")
+    fire_script(search_box, "OnEnterPressed")
+    check(g_last_focus == nil, "search Enter does not focus a locked CVar's value field")
+    g_by_name.graphicsQuality.locked = nil
+    slash("refresh")
+    slash("extra")
+end
+
+-- Filters chip ---------------------------------------------------------------
+
+do
+    g_frame.filters.scope = "account"
+    g_frame.update_filter_chip()
+    local part = g_frame.filter_chip.icon_parts and g_frame.filter_chip.icon_parts[1]
+    check(part ~= nil and part._color[1] == 0.717647,
+        "active filters tint the Filters funnel accent")
+    g_frame.filters.scope = ""
+    g_frame.update_filter_chip()
+
+    -- The filter menu's scrollbar thumb can be dragged.
+    fire_script(g_frame.filter_chip, "OnClick")
+    local scroll = g_frame.filter_scroll
+    local thumb = g_frame.filter_scroll_thumb
+    scroll._h = 200
+    scroll:SetVerticalScroll(0)
+    g_mouse_down = true
+    g_cursor_y = 360
+    fire_script(thumb, "OnMouseDown", "LeftButton")
+    g_cursor_y = 330
+    thumb._scripts.OnUpdate(thumb, 1 / 60)
+    check(scroll._scroll > 0, "dragging the filter thumb down scrolls the menu")
+    fire_script(thumb, "OnMouseUp", "LeftButton")
+    check(thumb._scripts.OnUpdate == nil, "releasing the filter thumb ends the drag")
+    g_cursor_y = 360
+    g_frame.close_menus()
 end
 
 -- Secure CVar in combat ------------------------------------------------------
@@ -591,7 +675,8 @@ do
     check(g_last_focus ~= nil and g_last_focus._text == "autoLootDefault"
         and g_last_focus._highlighted, "copy shows the name highlighted in a focused box")
     local status = find_widget(function(w)
-        return w._kind == "FontString" and w._text:match("^Press Ctrl%+C to copy name")
+        return w._kind == "FontString"
+            and w._text == "Press Ctrl+C to copy the name of autoLootDefault"
     end)
     check(status ~= nil, "copy status tells the user to press Ctrl+C")
     -- The status line ends at the detail area's right edge (the 24px window
@@ -875,10 +960,61 @@ do
     local scroll_frame = find_widget(function(w)
         return w._kind == "ScrollFrame" and w._parent == g_frame
     end)
+    scroll_frame._mouse_over = true
     fire_script(scroll_frame, "OnVerticalScroll", 0)
     check(not panel._shown, "scrolling hides the tooltip")
+    scroll_frame._mouse_over = false
     next_row._mouse_over = false
     next_row.favorite._mouse_over = false
+    g_frame.hide_tooltip()
+
+    -- Control tooltips share the panel and the delay.
+    local chip = g_frame.filter_chip
+    chip._mouse_over = true
+    fire_script(chip, "OnEnter")
+    timer._scripts.OnUpdate(timer, 0.6)
+    check(not panel._shown, "the Filters chip has no tooltip with no filters on")
+    fire_script(chip, "OnLeave")
+    g_frame.hide_tooltip()
+    g_frame.filters.scope = "account"
+    g_frame.filters.has.changed = true
+    g_frame.filters.has.range = true
+    g_frame.update_filter_chip()
+    fire_script(chip, "OnEnter")
+    timer._scripts.OnUpdate(timer, 0.6)
+    check(shown_texts(panel) == "Active filters|scope:account, has:range, has:changed",
+        "the Filters chip tooltip lists facets in menu order: " .. shown_texts(panel))
+    point, anchor, relative_point, x, y = panel:GetPoint(1)
+    check(point == "TOPLEFT" and anchor == chip and relative_point == "BOTTOMLEFT"
+        and x == 0 and y == -4, "a control tooltip hangs 4px below the control")
+    fire_script(chip, "OnMouseDown", "LeftButton")
+    check(not panel._shown, "a mouse down on a control hides its tooltip")
+    chip._mouse_over = false
+    fire_script(chip, "OnLeave")
+    g_frame.filters.scope = ""
+    g_frame.filters.has = {}
+    g_frame.update_filter_chip()
+    g_frame.hide_tooltip()
+
+    local saved_undo, saved_redo = g_frame.undo_stack, g_frame.redo_stack
+    g_frame.undo_stack = { { name = "extra5", previous = "5" } }
+    g_frame.redo_stack = {}
+    g_frame.update_history_controls()
+    g_frame.undo_button._mouse_over = true
+    fire_script(g_frame.undo_button, "OnEnter")
+    timer._scripts.OnUpdate(timer, 0.6)
+    check(shown_texts(panel) == "Undo extra5|Ctrl+Z",
+        "the Undo tooltip names the CVar and the shortcut: " .. shown_texts(panel))
+    g_frame.undo_button._mouse_over = false
+    fire_script(g_frame.undo_button, "OnLeave")
+    g_frame.redo_button._mouse_over = true
+    fire_script(g_frame.redo_button, "OnEnter")
+    check(shown_texts(panel) == "Nothing to redo|Ctrl+Y or Ctrl+Shift+Z",
+        "moving to disabled Redo swaps the tooltip at once: " .. shown_texts(panel))
+    g_frame.redo_button._mouse_over = false
+    fire_script(g_frame.redo_button, "OnLeave")
+    g_frame.undo_stack, g_frame.redo_stack = saved_undo, saved_redo
+    g_frame.update_history_controls()
     g_frame.hide_tooltip()
 end
 
@@ -940,8 +1076,195 @@ do
     fire_script(search_box, "OnEscapePressed")
     check(not search_box._focused, "the second Escape leaves the search box")
 
+    -- Undo and redo shortcuts, only over the window.
+    slash("extra3")
+    g_last_focus:SetText("33")
+    fire_script(g_last_focus, "OnEnterPressed")
+    g_last_focus:ClearFocus()
+    g_frame._mouse_over = true
+    g_ctrl_down = true
+    fire_script(g_frame, "OnKeyDown", "Z")
+    local call = last_set_call()
+    check(call and call[1] == "extra3" and call[2] == "3" and g_frame._propagate == false,
+        "Ctrl+Z over the window undoes the last set")
+    fire_script(g_frame, "OnKeyUp", "Z")
+    g_shift_down = true
+    fire_script(g_frame, "OnKeyDown", "Z")
+    call = last_set_call()
+    check(call and call[1] == "extra3" and call[2] == "33",
+        "Ctrl+Shift+Z over the window redoes")
+    fire_script(g_frame, "OnKeyUp", "Z")
+    g_shift_down = false
+    local calls_before = #g_set_calls
+    fire_script(g_frame, "OnKeyDown", "Y")
+    check(#g_set_calls == calls_before and g_frame._propagate == false,
+        "Ctrl+Y with nothing to redo does nothing and keeps the key")
+    fire_script(g_frame, "OnKeyUp", "Y")
+    g_ctrl_down = false
+    fire_script(g_frame, "OnKeyDown", "Z")
+    check(#g_set_calls == calls_before and g_frame._propagate == true,
+        "Z without Ctrl passes through")
+    fire_script(g_frame, "OnKeyUp", "Z")
+
     g_frame._mouse_over = false
     scroll_frame._h = 340
+    slash("extra")
+end
+
+-- Scroll redraw, thumb drags, and tooltip gates -----------------------------
+
+do
+    local scroll_frame = find_widget(function(w)
+        return w._kind == "ScrollFrame" and w._parent == g_frame
+    end)
+    local first_row = find_widget(function(w)
+        return w.favorite ~= nil and w._parent == scroll_frame._scroll_child
+    end)
+    local list_thumb = find_widget(function(w)
+        return w._kind == "Frame" and w._scripts.OnMouseDown ~= nil
+            and w ~= g_frame.filter_scroll_thumb
+            and w._parent and w._parent._parent == g_frame
+    end)
+    local timer = find_widget(function(w)
+        return w._kind == "Frame" and w._parent == g_frame
+            and w._scripts.OnUpdate ~= nil
+    end)
+    local panel = g_frame.tooltip
+    CVarBrowserDB.smooth_scroll = false
+    scroll_frame._h = 110
+    slash("extra")
+
+    -- Rows only re-bind when the top row changes.
+    scroll_frame:SetVerticalScroll(10)
+    fire_script(scroll_frame, "OnVerticalScroll", 10)
+    check(first_row.entry and first_row.entry.name == "extra1",
+        "scrolling less than a row keeps the top row")
+    scroll_frame:SetVerticalScroll(22)
+    fire_script(scroll_frame, "OnVerticalScroll", 22)
+    check(first_row.entry and first_row.entry.name == "extra10",
+        "scrolling a full row moves the top row to the next entry")
+
+    -- Releasing the list thumb settles on a whole row, and a release outside
+    -- the thumb still ends the drag.
+    check(list_thumb ~= nil, "the list scrollbar thumb exists")
+    scroll_frame:SetVerticalScroll(0)
+    -- A 110px bar and a 32px thumb make a 3px drag land between rows.
+    list_thumb._parent._h = 110
+    g_mouse_down = true
+    g_cursor_y = 360
+    fire_script(list_thumb, "OnMouseDown", "LeftButton")
+    check(list_thumb.drag ~= nil, "pressing the list thumb starts a drag")
+    g_cursor_y = 357
+    list_thumb._scripts.OnUpdate(list_thumb, 1 / 60)
+    g_mouse_down = false
+    list_thumb._scripts.OnUpdate(list_thumb, 1 / 60)
+    check(list_thumb._scripts.OnUpdate == nil and list_thumb.drag == nil,
+        "a release outside the list thumb ends the drag")
+    -- The 3px drag lands near 41.6. The settle moves it to row 2 (44),
+    -- give or take the pixel rounding of the stub's 1.875 px per unit.
+    check(math.abs(scroll_frame._scroll - 44) < 1 / PX,
+        "the list settles on a whole row after a drag: " .. scroll_frame._scroll)
+    g_mouse_down = true
+    g_cursor_y = 360
+
+    -- Hiding the window mid-drag ends the drag, since OnUpdate stops.
+    fire_script(list_thumb, "OnMouseDown", "LeftButton")
+    fire_script(g_frame, "OnHide")
+    check(list_thumb.drag == nil and list_thumb._scripts.OnUpdate == nil,
+        "hiding the window ends a thumb drag")
+
+    -- No row tooltip during a thumb drag, and no control tooltip with a menu
+    -- open.
+    first_row._mouse_over = true
+    fire_script(list_thumb, "OnMouseDown", "LeftButton")
+    fire_script(first_row, "OnEnter")
+    timer._scripts.OnUpdate(timer, 0.6)
+    check(not panel._shown, "rows show no tooltip while the thumb is dragged")
+    fire_script(list_thumb, "OnMouseUp", "LeftButton")
+    first_row._mouse_over = false
+    fire_script(first_row, "OnLeave")
+    g_frame.hide_tooltip()
+    fire_script(g_frame.sort_chip, "OnClick")
+    g_frame.regex_chip._mouse_over = true
+    fire_script(g_frame.regex_chip, "OnEnter")
+    timer._scripts.OnUpdate(timer, 0.6)
+    check(not panel._shown, "controls show no tooltip while a menu is open")
+    g_frame.close_menus()
+    -- The title names the pattern search state, off then on.
+    local function regex_title()
+        fire_script(g_frame.regex_chip, "OnEnter")
+        timer._scripts.OnUpdate(timer, 0.6)
+        local title = nil
+        for _, region in ipairs(panel._regions) do
+            if region._kind == "FontString" and region._shown and not title then
+                title = region._text
+            end
+        end
+        fire_script(g_frame.regex_chip, "OnLeave")
+        g_frame.hide_tooltip()
+        return title
+    end
+    check(regex_title() == "Pattern search off", "the regex chip tooltip says off")
+    slash("regex on")
+    check(regex_title() == "Pattern search on", "the regex chip tooltip says on")
+    slash("regex off")
+    slash("extra")
+    g_frame.regex_chip._mouse_over = false
+    fire_script(g_frame.regex_chip, "OnLeave")
+    g_frame.hide_tooltip()
+
+    -- A mouse down on disabled Redo leaves its tooltip up, and any undo hides
+    -- the stale history tooltip.
+    g_frame.redo_stack = {}
+    g_frame.update_history_controls()
+    g_frame.redo_button._mouse_over = true
+    fire_script(g_frame.redo_button, "OnEnter")
+    timer._scripts.OnUpdate(timer, 0.6)
+    fire_script(g_frame.redo_button, "OnMouseDown", "LeftButton")
+    check(panel._shown, "a mouse down on disabled Redo keeps its tooltip")
+    slash("extra4")
+    fire_script(g_frame.redo_button, "OnEnter")
+    timer._scripts.OnUpdate(timer, 0.6)
+    check(panel._shown, "the Redo tooltip is up before the set")
+    g_last_focus:SetText("44")
+    fire_script(g_last_focus, "OnEnterPressed")
+    g_last_focus:ClearFocus()
+    check(not panel._shown, "a set hides the history tooltip")
+    fire_script(g_frame.redo_button, "OnEnter")
+    timer._scripts.OnUpdate(timer, 0.6)
+    slash("undo")
+    check(not panel._shown, "an undo hides the history tooltip")
+    g_frame.redo_button._mouse_over = false
+    fire_script(g_frame.redo_button, "OnLeave")
+    g_frame.hide_tooltip()
+
+    -- Ctrl+Z with the cursor outside the window reaches the game.
+    local calls_before = #g_set_calls
+    g_frame._mouse_over = false
+    g_ctrl_down = true
+    fire_script(g_frame, "OnKeyDown", "Z")
+    check(#g_set_calls == calls_before and g_frame._propagate == true,
+        "Ctrl+Z outside the window passes through")
+    g_ctrl_down = false
+
+    -- Toggling a favorite under the pointer keeps the accent but fills the
+    -- diamond.
+    slash("extra")
+    local mark = first_row.favorite.mark
+    first_row.favorite._mouse_over = true
+    fire_script(first_row.favorite, "OnEnter")
+    local filled_before = mark.interior[1]._shown
+    fire_script(first_row.favorite, "OnClick")
+    local entry = first_row.entry
+    check(entry and entry.favorite and mark.interior[1]._shown and not filled_before,
+        "toggling a favorite under the pointer fills its diamond")
+    fire_script(first_row.favorite, "OnClick")
+    first_row.favorite._mouse_over = false
+    fire_script(first_row.favorite, "OnLeave")
+    g_frame.hide_tooltip()
+
+    scroll_frame._h = 340
+    CVarBrowserDB.smooth_scroll = true
     slash("extra")
 end
 
@@ -1047,11 +1370,11 @@ do
     end
 end
 
--- Repository build -------------------------------------------------------------
+-- Repository build -----------------------------------------------------------
 
 do
     g_metadata = { Version = "dev" }
-    local ok, err = pcall(assert(loadfile(ADDON_PATH)), "CVarBrowser", {})
+    local ok, err = load_addon()
     check(ok, "dev build loads: " .. tostring(err))
     check(find_widget(function(w)
         return w._kind == "FontString" and w._text == "WoW Forever · dev"
@@ -1065,18 +1388,24 @@ do
     -- the register check must run. Without it, a missing luac just skips the
     -- check.
     local luac = os.getenv("LUAC")
-    local listing = io.popen((luac or "luac") .. ' -l -l -p "' .. ADDON_PATH .. '" 2>&1')
-    local slots = nil
-    if listing then
-        slots = tonumber(listing:read("*a"):match("main <.-\n[^\n]-(%d+) slots"))
-        listing:close()
-    end
-    if slots then
-        check(slots < 190, "main chunk uses " .. slots .. " of 200 register slots")
-    elseif luac then
-        check(false, "register check: could not run " .. luac)
-    else
-        io.stderr:write("note: luac not available; skipped register check\n")
+    for _, path in ipairs(ADDON_FILES) do
+        local listing = io.popen((luac or "luac") .. ' -l -l -p "' .. path .. '" 2>&1')
+        local slots = nil
+        if listing then
+            slots = tonumber(listing:read("*a"):match("main <.-\n[^\n]-(%d+) slots"))
+            listing:close()
+        end
+        if slots then
+            check(
+                slots < 190,
+                path .. " main chunk uses " .. slots .. " of 200 register slots"
+            )
+        elseif luac then
+            check(false, "register check: could not run " .. luac .. " on " .. path)
+        else
+            io.stderr:write("note: luac not available; skipped register check\n")
+            break
+        end
     end
 end
 

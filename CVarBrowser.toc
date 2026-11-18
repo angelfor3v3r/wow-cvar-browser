@@ -9,4 +9,13 @@
 ## AddonCompartmentFuncOnEnter: CVarBrowser_OnAddonCompartmentEnter
 ## AddonCompartmentFuncOnLeave: CVarBrowser_OnAddonCompartmentLeave
 
-CVarBrowser.lua
+src\core.lua
+src\window.lua
+src\toolbar.lua
+src\list.lua
+src\detail.lua
+src\layout.lua
+src\minimap.lua
+src\render.lua
+src\events.lua
+src\commands.lua
