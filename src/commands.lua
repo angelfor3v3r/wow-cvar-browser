@@ -56,13 +56,25 @@ do
     end
 
     -- Undo and redo are mirror images. Pop one stack, re-apply its previous
-    -- value, and push the value it replaced onto the other stack.
-    local function step_history(verb)
+    -- value, and push the value it replaced onto the other stack. A step
+    -- from the window reports on the status line only, and a slash command
+    -- also prints to chat.
+    local function step_history(verb, from_window)
+        local function report(chat_text, status_text, tone)
+            if status_text then
+                set_status(status_text, tone)
+            end
+            if not from_window then
+                chat(chat_text)
+            end
+        end
+
         local is_undo = verb == "undo"
+        local title = is_undo and "Undo" or "Redo"
         local from = is_undo and g_frame.undo_stack or g_frame.redo_stack
         local last = from[#from]
         if not last then
-            chat("nothing to " .. verb)
+            report("nothing to " .. verb, nil, nil)
             return
         end
         -- The Undo and Redo tooltips name the CVar on top of the stack, so
@@ -71,30 +83,41 @@ do
         g_frame:Show()
         local entry = g_frame.by_name[last.name]
         if not entry then
-            chat("CVar " .. last.name .. " no longer exists")
-            return
-        end
-        if not can_edit(entry) then
-            chat(
-                "cannot " .. verb .. " " .. last.name .. " in its current state"
+            report(
+                "CVar " .. last.name .. " no longer exists",
+                title .. " failed because " .. last.name .. " no longer exists",
+                "error"
             )
             return
         end
-        local title = is_undo and "Undo" or "Redo"
+        if not can_edit(entry) then
+            report(
+                "cannot " .. verb .. " " .. last.name .. " in its current state",
+                title .. " of " .. last.name .. " is blocked in its current state",
+                "error"
+            )
+            return
+        end
         local current = entry.value
         from[#from] = nil
         local ok, result = pcall(SetCVarNative, last.name, last.previous)
         if not ok or result == false then
             from[#from + 1] = last
-            chat(verb .. " refused for " .. last.name)
-            set_status(title .. " of " .. last.name .. " was refused", "error")
+            report(
+                verb .. " refused for " .. last.name,
+                title .. " of " .. last.name .. " was refused",
+                "error"
+            )
             return
         end
         read_cvar_value(entry)
         if entry.value ~= last.previous then
             from[#from + 1] = last
-            chat(verb .. " did not stick for " .. last.name)
-            set_status(title .. " of " .. last.name .. " did not stick", "error")
+            report(
+                verb .. " did not stick for " .. last.name,
+                title .. " of " .. last.name .. " did not stick",
+                "error"
+            )
             return
         end
         local to = is_undo and g_frame.redo_stack or g_frame.undo_stack
@@ -107,15 +130,60 @@ do
         end
         log_change(entry, verb, current, entry.value)
         apply_range(entry)
+        -- The clamp tick marks the last clamped set, which this step replaced.
+        entry.clamp_at = nil
+        entry.clamp_side = nil
         select_entry(entry)
-        local text = format(
-            is_undo and "Undid %s to %s" or "Redid %s to %s",
-            last.name,
-            display_edit_value(entry, entry.value)
+        local value_text = display_edit_value(entry, entry.value)
+        -- Chat lines are lowercase fragments, the status line a sentence.
+        report(
+            format("%s %s to %s", is_undo and "undid" or "redid",
+                last.name, value_text),
+            format("%s %s to %s", is_undo and "Undid" or "Redid",
+                last.name, value_text),
+            nil
         )
-        set_status(text)
-        chat(text)
     end
+
+    g_frame.step_history = step_history
+
+    -- Opens the copy box with one field of a CVar. The slash command and
+    -- the Copy menu rows both use it.
+    local function copy_field(entry, field)
+        local value = nil
+        if field == "name" then
+            value = entry.name
+        elseif field == "default" then
+            value = entry.default_value
+        elseif field == "help" then
+            value = entry.help
+        elseif field == "range" then
+            value = entry.range_text
+        elseif field == "raw" then
+            value = entry.value
+        else
+            value = display_edit_value(entry, entry.value)
+        end
+        if value == nil or value == "" then
+            chat("nothing to copy for " .. entry.name)
+            return
+        end
+        g_frame.close_menus()
+        g_frame.show_copy_box(tostring(value))
+        -- The field as the Copy menu names it, so the status reads as a
+        -- sentence.
+        local field_names = {
+            raw = "raw value",
+            help = "help text",
+        }
+        set_status(format(
+            "Press Ctrl+C to copy the %s of %s",
+            field_names[field] or field,
+            entry.name
+        ))
+    end
+
+    g_frame.copy_field = copy_field
 
     SlashCmdList["CVARBROWSER"] = function(message)
         local message_text = trim(message or "")
@@ -165,40 +233,13 @@ do
                 entry = g_frame.by_name[target_name]
             end
             if not entry then
-                chat("no CVar selected to copy")
+                chat(
+                    target_name and ("unknown CVar " .. target_name)
+                        or "no CVar selected to copy"
+                )
                 return
             end
-            local value = nil
-            if field == "name" then
-                value = entry.name
-            elseif field == "default" then
-                value = entry.default_value
-            elseif field == "help" then
-                value = entry.help
-            elseif field == "range" then
-                value = entry.range_text
-            elseif field == "raw" then
-                value = entry.value
-            else
-                value = display_edit_value(entry, entry.value)
-            end
-            if value == nil or value == "" then
-                chat("nothing to copy for " .. entry.name)
-                return
-            end
-            g_frame.close_menus()
-            g_frame.show_copy_box(tostring(value))
-            -- The field as the Copy menu names it, so the status reads as
-            -- a sentence.
-            local field_names = {
-                raw = "raw value",
-                help = "help text",
-            }
-            set_status(format(
-                "Press Ctrl+C to copy the %s of %s",
-                field_names[field] or field,
-                entry.name
-            ))
+            copy_field(entry, field)
             return
         end
 
@@ -215,8 +256,15 @@ do
             return
         end
 
-        local sort_key, sort_dir = lower:match("^sort%s+(%S+)%s*(%S*)$")
-        if sort_key then
+        if lower == "sort" or lower:match("^sort%s+") then
+            -- Reports to chat as well, since the window may be hidden.
+            local function report(chat_text, status_text, tone)
+                set_status(status_text, tone)
+                chat(chat_text)
+            end
+            -- Everything after the key counts as the direction, so extra
+            -- words report a bad direction rather than a bad key.
+            local sort_key, sort_dir = lower:match("^sort%s+(%S+)%s*(.-)$")
             local valid = sort_key == "name"
                 or sort_key == "type"
                 or sort_key == "scope"
@@ -224,14 +272,19 @@ do
                 or sort_key == "changed"
                 or sort_key == "range"
             if not valid then
-                set_status(
+                report(
+                    "sort must be name, type, scope, category, changed, or range",
                     "Sort must be name, type, scope, category, changed, or range.",
                     "error"
                 )
                 return
             end
             if sort_dir ~= "" and sort_dir ~= "asc" and sort_dir ~= "desc" then
-                set_status("Sort direction must be asc or desc.", "error")
+                report(
+                    "sort direction must be asc or desc",
+                    "Sort direction must be asc or desc.",
+                    "error"
+                )
                 return
             end
             g_frame.sort_key = sort_key
@@ -241,7 +294,8 @@ do
             g_frame.sort_dir = sort_dir
             g_frame.update_sort_chip()
             rebuild_view()
-            set_status("Sorted by " .. sort_key .. " " .. sort_dir)
+            local text = sort_key .. " " .. sort_dir
+            report("sorted by " .. text, "Sorted by " .. text)
             return
         end
 
@@ -256,10 +310,9 @@ do
             end
             g_frame.update_regex_chip()
             rebuild_view()
-            local text = "Pattern search "
-                .. (g_frame.regex_enabled and "on" or "off")
-            set_status(text)
-            chat(text)
+            local state = g_frame.regex_enabled and "on" or "off"
+            set_status("Pattern search " .. state)
+            chat("pattern search " .. state)
             return
         end
 

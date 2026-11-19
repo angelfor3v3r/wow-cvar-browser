@@ -28,6 +28,7 @@ local FONT_BODY = ns.FONT_BODY
 local FONT_META = ns.FONT_META
 local FONT_CHECK = ns.FONT_CHECK
 local round = ns.round
+local fit_text_button = ns.fit_text_button
 local make_text = ns.make_text
 local set_texture_color = ns.set_texture_color
 local set_text_color = ns.set_text_color
@@ -157,20 +158,6 @@ local function resolve_layout(physical_height)
     return LAYOUT_PRESETS.standard
 end
 
--- Snug label fit with 4px text padding from the outline on each side and a
--- caller-supplied floor so tiny buttons never collapse absurdly narrow.
--- Re-run after font resizes.
-local function fit_text_button(button, minimum)
-    if not button or not button.label then
-        return
-    end
-    local width = button.label:GetStringWidth() + 8
-    if minimum and minimum > width then
-        width = minimum
-    end
-    button:SetWidth(round(width))
-end
-
 local function update_scale_button()
     local preset_key = g_frame.db and g_frame.db.preset or "auto"
     local label = LAYOUT_OPTIONS[1].label
@@ -292,6 +279,13 @@ local function apply_ui_scale()
         px_per_unit = measure_px_per_unit(physical_height) or px_per_unit
     end
     if not px_per_unit or px_per_unit <= 0 then
+        px_per_unit = 1
+    end
+    -- The scale above is exact, so a reading within 0.001 of 1 is float
+    -- noise from GetScaledRect. Keeping that noise (0.9999995 in game) put
+    -- the window 0.001px off the grid at large coordinates, and snapping
+    -- then flipped boxes between 1009.9999 and 1010.0001 on every update.
+    if abs(px_per_unit - 1) < 1e-3 then
         px_per_unit = 1
     end
     g_frame.px_per_unit = px_per_unit

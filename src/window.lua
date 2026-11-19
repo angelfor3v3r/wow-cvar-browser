@@ -1,7 +1,7 @@
 -- CVar Browser. Root window setup, smooth scrolling, the title bar,
 -- the search row, and the Changed only toggle.
 
-local g_addon_name, ns = ...
+local ADDON_NAME, ns = ...
 
 -- Localized WoW APIs ---------------------------------------------------------
 
@@ -113,8 +113,8 @@ do
     -- follow DESIGN.md (Subtitle).
     local get_metadata = (C_AddOns and C_AddOns.GetAddOnMetadata)
         or GetAddOnMetadata
-    local version = trim(get_metadata and get_metadata(g_addon_name, "Version"))
-    local build = trim(get_metadata and get_metadata(g_addon_name, "X-Build"))
+    local version = trim(get_metadata and get_metadata(ADDON_NAME, "Version"))
+    local build = trim(get_metadata and get_metadata(ADDON_NAME, "X-Build"))
     local subtitle_text = "WoW Forever · dev"
     if version ~= "" and version:lower() ~= "dev" then
         subtitle_text = "WoW Forever · v" .. version:gsub("^[vV]", "")
@@ -246,6 +246,17 @@ local g_changed_tick = make_text(g_changed_box, FONT_CHECK, "✓", COLORS.accent
 g_changed_tick:SetPoint("CENTER", g_changed_box, "CENTER", 1, 0)
 g_changed_tick:Hide()
 
+-- Sets the Changed only state and its tick. The toggle and Clear all both
+-- use it, so the two cannot drift apart.
+g_changed_button.set_checked = function(checked)
+    g_changed_button.checked = checked
+    g_changed_tick:SetShown(checked)
+    -- The tick is hidden at every layout snap until first checked.
+    if checked and not g_changed_tick.text_snap then
+        g_frame.snap_region_tree(g_changed_box)
+    end
+end
+
 do
     local changed_label = make_text(
         g_changed_button,
@@ -268,5 +279,4 @@ ns.g_search_frame = g_search_frame
 ns.g_search_box = g_search_box
 ns.g_search_placeholder = g_search_placeholder
 ns.g_changed_button = g_changed_button
-ns.g_changed_tick = g_changed_tick
 ns.g_count_text = g_count_text

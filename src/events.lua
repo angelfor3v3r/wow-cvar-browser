@@ -1,7 +1,7 @@
 -- CVar Browser. Script wiring for the window, list, keyboard, and game
 -- events.
 
-local g_addon_name, ns = ...
+local ADDON_NAME, ns = ...
 
 -- Localized WoW APIs ---------------------------------------------------------
 
@@ -115,7 +115,12 @@ local function wire_thumb_drag(thumb, bar, scroll, on_stop)
         thumb:SetScript("OnUpdate", follow)
     end)
 
-    thumb:SetScript("OnMouseUp", stop)
+    -- Only the left button ends a drag, as on the title bar.
+    thumb:SetScript("OnMouseUp", function(_, button)
+        if button == "LeftButton" then
+            stop()
+        end
+    end)
 end
 
 -- Releasing the list's thumb settles the list on a whole row.
@@ -524,8 +529,8 @@ for index = 1, ROW_COUNT do
     end)
 end
 
--- Hiding stops OnUpdate, so a thumb drag in progress would never see the
--- button release. End any drag here.
+-- A hidden window runs no OnUpdate, so a thumb drag could not poll for the
+-- button release until the window shows again. End any thumb drag here.
 g_frame:SetScript("OnHide", function()
     g_frame.hide_tooltip()
     for _, thumb in ipairs({ g_scrollbar_thumb, g_frame.filter_scroll_thumb }) do
@@ -543,7 +548,7 @@ end)
 
 g_frame:SetScript("OnEvent", function(self, event, argument)
     if event == "ADDON_LOADED" then
-        if argument ~= g_addon_name then
+        if argument ~= ADDON_NAME then
             return
         end
         init_db()

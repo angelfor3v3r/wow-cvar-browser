@@ -228,7 +228,6 @@ do
 
         local name_text = make_text(row, FONT_BODY, "", COLORS.text)
         name_text:SetPoint("LEFT", row, "LEFT", 22, 0)
-        name_text:SetWidth(284)
         name_text:SetJustifyH("LEFT")
         name_text:SetWordWrap(false)
 
@@ -237,7 +236,6 @@ do
 
         local value_text = make_text(row, FONT_BODY, "", COLORS.text)
         value_text:SetPoint("RIGHT", row, "RIGHT", -6, 0)
-        value_text:SetWidth(300)
         value_text:SetJustifyH("RIGHT")
         value_text:SetWordWrap(false)
 
@@ -418,8 +416,13 @@ do
         local height = fit_panel()
         -- Below the row with the text in line with the row name, or above
         -- it when the panel would come within 8px of the window bottom.
-        if (target:GetBottom() or 0) - 4 - height
-            < (g_frame:GetBottom() or 0) + 8 then
+        -- If above would come within 8px of the window top too, it stays
+        -- below.
+        local below_too_low = (target:GetBottom() or 0) - 4 - height
+            < (g_frame:GetBottom() or 0) + 8
+        local above_too_high = (target:GetTop() or 0) + 4 + height
+            > (g_frame:GetTop() or 0) - 8
+        if below_too_low and not above_too_high then
             panel:SetPoint("BOTTOMLEFT", target, "TOPLEFT", 14, 4)
         else
             panel:SetPoint("TOPLEFT", target, "BOTTOMLEFT", 14, -4)

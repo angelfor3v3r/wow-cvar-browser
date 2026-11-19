@@ -14,7 +14,7 @@ local GetCVarDefault = (C_CVar and C_CVar.GetCVarDefault) or GetCVarDefault
 local pairs, ipairs = pairs, ipairs
 local type, tostring, tonumber = type, tostring, tonumber
 local pcall = pcall
-local floor, max = math.floor, math.max
+local floor, max, abs = math.floor, math.max, math.abs
 local format = string.format
 local concat, remove = table.concat, table.remove
 local time = time
@@ -120,6 +120,10 @@ local DB_DEFAULTS = {
 local LOG_LIMIT = 200
 -- Undo and redo each keep this many steps for the session.
 local UNDO_LIMIT = 20
+-- Snap corrections under this many physical pixels are float noise. Applying
+-- them made boxes flip between 1009.9999 and 1010.0001 on every update, and
+-- text drawn at those two places lands on different pixels.
+local SNAP_DEADBAND_PX = 0.01
 
 -- Fonts ----------------------------------------------------------------------
 
@@ -341,8 +345,14 @@ local function add_border(target, color)
     return { top, bottom, left, right }
 end
 
+-- Whether a snap correction is small enough to be float noise.
+local function is_on_grid(delta, px_per_unit)
+    return abs(delta * px_per_unit) < SNAP_DEADBAND_PX
+end
+
 -- Moves a region's first anchor so its rect lands on whole physical
--- pixels, and resizes it to whole pixels unless it is text.
+-- pixels, and resizes it to whole pixels. Text goes through
+-- snap_region_tree instead.
 g_frame.snap_box = function(region)
     if not region or not region:IsShown() then
         return
@@ -375,7 +385,7 @@ g_frame.snap_box = function(region)
     local dx = snapped_left - left
     local dy = snapped_top - top
     local point, relative_to, relative_point, x, y = region:GetPoint(1)
-    if point then
+    if point and not (is_on_grid(dx, px_per_unit) and is_on_grid(dy, px_per_unit)) then
         region:ClearAllPoints()
         region:SetPoint(
             point,
@@ -385,8 +395,8 @@ g_frame.snap_box = function(region)
             (y or 0) + dy
         )
     end
-    if region:GetObjectType() ~= "FontString"
-        and (snapped_width ~= width or snapped_height ~= height) then
+    if not (is_on_grid(snapped_width - width, px_per_unit)
+        and is_on_grid(snapped_height - height, px_per_unit)) then
         region:SetSize(snapped_width, snapped_height)
     end
 end
@@ -410,31 +420,33 @@ g_frame.snap_line = function(region)
         1,
         round(height * px_per_unit) / px_per_unit
     )
-    local saved_points = {}
-    for index = 1, region:GetNumPoints() do
-        local point, relative_to, relative_point, x, y =
-            region:GetPoint(index)
-        if point then
-            saved_points[#saved_points + 1] = {
-                point,
-                relative_to,
-                relative_point,
-                x or 0,
-                (y or 0) + dy,
-            }
+    if not is_on_grid(dy, px_per_unit) then
+        local saved_points = {}
+        for index = 1, region:GetNumPoints() do
+            local point, relative_to, relative_point, x, y =
+                region:GetPoint(index)
+            if point then
+                saved_points[#saved_points + 1] = {
+                    point,
+                    relative_to,
+                    relative_point,
+                    x or 0,
+                    (y or 0) + dy,
+                }
+            end
+        end
+        region:ClearAllPoints()
+        for _, saved in ipairs(saved_points) do
+            region:SetPoint(
+                saved[1],
+                saved[2],
+                saved[3],
+                saved[4],
+                saved[5]
+            )
         end
     end
-    region:ClearAllPoints()
-    for _, saved in ipairs(saved_points) do
-        region:SetPoint(
-            saved[1],
-            saved[2],
-            saved[3],
-            saved[4],
-            saved[5]
-        )
-    end
-    if snapped_height ~= height then
+    if not is_on_grid(snapped_height - height, px_per_unit) then
         region:SetHeight(snapped_height)
     end
 end
@@ -447,8 +459,12 @@ end
 -- game on the "Value" header). The shift here is under half a pixel, so
 -- padding is unaffected. Each snap starts from the label's design offset
 -- (remembered unless code re-anchored it since), so repeated relayouts
--- with changing text never accumulate drift. Multi-anchor text is left
--- alone. snap_box only rewrites the first anchor.
+-- with changing text never accumulate drift. The design position is
+-- worked out from the current rect instead of re-anchoring first, because
+-- a rect read right after SetPoint can still hold the old place (seen in
+-- game as filter labels moving 1px on every other click). Hidden text is
+-- skipped, so code that shows text later must snap it again. Multi-anchor
+-- text is left alone.
 g_frame.snap_region_tree = function(region)
     if region.GetChildren then
         for _, child in ipairs({ region:GetChildren() }) do
@@ -466,21 +482,49 @@ g_frame.snap_region_tree = function(region)
             else
                 g_frame.snap_box(sub)
             end
-        elseif kind == "FontString" and sub:GetNumPoints() == 1 then
+        elseif kind == "FontString" and sub:GetNumPoints() == 1
+            and sub:IsShown() then
+            local px_per_unit = g_frame.px_per_unit
             local point, relative_to, relative_point, x, y = sub:GetPoint(1)
-            local last = sub.text_snap
-            if last and last.x == x and last.y == y then
-                x, y = last.base_x, last.base_y
-                sub:SetPoint(point, relative_to, relative_point, x, y)
+            local left, top = sub:GetLeft(), sub:GetTop()
+            x, y = x or 0, y or 0
+            if left and top and px_per_unit and px_per_unit > 0 then
+                local base_x, base_y = x, y
+                local last = sub.text_snap
+                -- The client stores offsets as 32-bit floats, so the offset
+                -- read back never equals the one written exactly. An exact
+                -- test took the snapped offset for a new design offset, and
+                -- labels drifted a pixel over two snaps.
+                if last and abs(last.x - x) < 1e-3
+                    and abs(last.y - y) < 1e-3 then
+                    base_x, base_y = last.base_x, last.base_y
+                end
+                -- Where the text sits at its design offset.
+                local raw_left = left - (x - base_x)
+                local raw_top = top - (y - base_y)
+                local snapped_x = base_x
+                    + round(raw_left * px_per_unit) / px_per_unit - raw_left
+                local snapped_y = base_y
+                    + round(raw_top * px_per_unit) / px_per_unit - raw_top
+                if is_on_grid(snapped_x - x, px_per_unit)
+                    and is_on_grid(snapped_y - y, px_per_unit) then
+                    snapped_x, snapped_y = x, y
+                else
+                    sub:SetPoint(
+                        point,
+                        relative_to,
+                        relative_point,
+                        snapped_x,
+                        snapped_y
+                    )
+                end
+                sub.text_snap = {
+                    base_x = base_x,
+                    base_y = base_y,
+                    x = snapped_x,
+                    y = snapped_y,
+                }
             end
-            g_frame.snap_box(sub)
-            local _, _, _, snapped_x, snapped_y = sub:GetPoint(1)
-            sub.text_snap = {
-                base_x = x or 0,
-                base_y = y or 0,
-                x = snapped_x,
-                y = snapped_y,
-            }
         end
     end
 end
@@ -510,6 +554,20 @@ local function create_button(parent, label, width, height)
         )
     end)
     return button
+end
+
+-- Snug label fit. Padding is the space around the label in total (8 by
+-- default, 4px a side), and a floor keeps tiny buttons from collapsing.
+-- Re-run after font resizes.
+local function fit_text_button(button, minimum, padding)
+    if not button or not button.label then
+        return
+    end
+    local width = button.label:GetStringWidth() + (padding or 8)
+    if minimum and minimum > width then
+        width = minimum
+    end
+    button:SetWidth(round(width))
 end
 
 -- Data / range helpers -------------------------------------------------------
@@ -1092,6 +1150,7 @@ ns.snap_texture = snap_texture
 ns.g_hairline = g_hairline
 ns.add_border = add_border
 ns.create_button = create_button
+ns.fit_text_button = fit_text_button
 ns.parse_range = parse_range
 ns.parse_enum_help = parse_enum_help
 ns.format_observed_range = format_observed_range

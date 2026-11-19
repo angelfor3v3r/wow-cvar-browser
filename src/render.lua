@@ -49,7 +49,6 @@ local build_meta_parts = ns.build_meta_parts
 local log_change = ns.log_change
 local g_search_box = ns.g_search_box
 local g_changed_button = ns.g_changed_button
-local g_changed_tick = ns.g_changed_tick
 local g_count_text = ns.g_count_text
 local g_scroll_frame = ns.g_scroll_frame
 local g_scroll_child = ns.g_scroll_child
@@ -90,6 +89,10 @@ local MUTED_ESCAPE = format(
     round(COLORS.muted[2] * 255),
     round(COLORS.muted[3] * 255)
 )
+
+-- Shown while a secure CVar is selected in combat, and cleared once the
+-- controls update out of combat.
+local COMBAT_WARNING = "Secure CVars can't change in combat."
 
 -- Rendering ------------------------------------------------------------------
 
@@ -142,7 +145,9 @@ local function update_controls()
     set_text_color(g_detail_name, name_color)
 
     if entry and entry.secure and not entry.readonly and InCombatLockdown() then
-        set_status("Secure CVars can't change in combat.", "warning")
+        set_status(COMBAT_WARNING, "warning")
+    elseif g_detail_status:GetText() == COMBAT_WARNING then
+        set_status("")
     end
     g_frame.update_history_controls()
     g_frame.update_copy_button()
@@ -272,6 +277,11 @@ local function update_gauge(gauge, entry)
     local open_right = domain_max == nil
     if domain_min == nil then
         domain_min = min(0, domain_max)
+        -- A value below the floor sits 20% into the track, mirroring the
+        -- open maximum's headroom, so its cursor clears the open-end glyph.
+        if value < domain_min then
+            domain_min = value - (domain_max - value) / 4
+        end
     end
     if domain_max == nil then
         local upper = max(value, 0, domain_min + 1, 1)
@@ -851,7 +861,7 @@ local function apply_value(action)
         return
     end
     if entry.secure and InCombatLockdown() then
-        set_status("Secure CVars can't change in combat.", "error")
+        set_status(COMBAT_WARNING, "error")
         return
     end
 
@@ -992,12 +1002,7 @@ local function reset_value()
 end
 
 local function toggle_changed()
-    g_changed_button.checked = not g_changed_button.checked
-    if g_changed_button.checked then
-        g_changed_tick:Show()
-    else
-        g_changed_tick:Hide()
-    end
+    g_changed_button.set_checked(not g_changed_button.checked)
     if g_frame.filter_popup:IsShown() then
         g_frame.refresh_filter_menu()
     end

@@ -124,7 +124,6 @@ g_frame.snap_boxes[#g_frame.snap_boxes + 1] = g_reset_button
 
 g_detail_status = make_text(g_detail, FONT_META, "", COLORS.success)
 g_detail_status:SetPoint("LEFT", g_reset_button, "RIGHT", 12, 0)
-g_detail_status:SetWidth(300)
 g_detail_status:SetJustifyH("LEFT")
 g_detail_status:SetWordWrap(false)
 
@@ -191,7 +190,7 @@ do
         local mark = CreateFrame("Frame", nil, parent)
         mark:SetSize(12, 8)
         for _, x in ipairs({ 0, 10 }) do
-            local tick = mark:CreateTexture(nil, "ARTWORK")
+            local tick = snap_texture(mark:CreateTexture(nil, "ARTWORK"))
             set_texture_color(tick, COLORS.observed)
             tick:SetSize(1, 6)
             tick:SetPoint("LEFT", mark, "LEFT", x, 0)
@@ -202,7 +201,7 @@ do
     local function create_current_mark(parent)
         local mark = CreateFrame("Frame", nil, parent)
         mark:SetSize(2, 8)
-        local line = mark:CreateTexture(nil, "ARTWORK")
+        local line = snap_texture(mark:CreateTexture(nil, "ARTWORK"))
         line:SetAllPoints(mark)
         set_texture_color(line, COLORS.text)
         return mark

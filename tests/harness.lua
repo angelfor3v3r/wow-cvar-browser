@@ -450,14 +450,20 @@ do
     check(g_by_name.cameraDistanceMaxZoomFactor.value == "2.6", "stub clamped to 2.6")
     local observed = CVarBrowserDB.observed.cameraDistanceMaxZoomFactor
     check(type(observed) == "table", "clamp is recorded as an observed bound")
+    local camera = g_frame.by_name.cameraDistanceMaxZoomFactor
+    check(camera.clamp_at == 2.6, "a clamped set marks the clamp on the gauge")
 
     g_chat = {}
     slash("Ranges cameraDistanceMaxZoomFactor")
     check(chat_has("1 observed range"), "/cvars ranges <name> lists that CVar (any case)")
 
+    g_chat = {}
     slash("undo")
+    check(chat_has("undid cameraDistanceMaxZoomFactor"), "/cvars undo prints to chat")
     call = last_set_call()
     check(call and call[2] == "1.9", "undo restores the previous value")
+    check(camera.clamp_at == nil and camera.clamp_side == nil,
+        "undo clears the clamp mark of the set it undid")
     slash("redo")
     call = last_set_call()
     check(call and call[2] == "2.6", "redo re-applies the clamped value")
@@ -542,6 +548,16 @@ end
 -- Filters chip ---------------------------------------------------------------
 
 do
+    -- The client hands offsets back as 32-bit floats, a hair off what was
+    -- written. A re-snap must still start from the design offset.
+    local label = g_frame.filter_chip.label
+    local point, relative_to, relative_point, x, y = label:GetPoint(1)
+    label:SetPoint(point, relative_to, relative_point, x + 1e-6, y - 1e-6)
+    g_frame.snap_region_tree(g_frame.filter_chip)
+    g_frame.snap_region_tree(g_frame.filter_chip)
+    check(label.text_snap and label.text_snap.base_x == 18 and label.text_snap.base_y == 0,
+        "text snapping keeps the design offset through float rounding")
+
     g_frame.filters.scope = "account"
     g_frame.update_filter_chip()
     local part = g_frame.filter_chip.icon_parts and g_frame.filter_chip.icon_parts[1]
@@ -562,6 +578,8 @@ do
     g_cursor_y = 330
     thumb._scripts.OnUpdate(thumb, 1 / 60)
     check(scroll._scroll > 0, "dragging the filter thumb down scrolls the menu")
+    fire_script(thumb, "OnMouseUp", "RightButton")
+    check(thumb._scripts.OnUpdate ~= nil, "a right-button release keeps the thumb drag")
     fire_script(thumb, "OnMouseUp", "LeftButton")
     check(thumb._scripts.OnUpdate == nil, "releasing the filter thumb ends the drag")
     g_cursor_y = 360
@@ -580,6 +598,34 @@ do
         and clear.borders[1]._color[1] == 0.203922,
         "Clear all drops its hover look when it disables under the pointer")
     clear._mouse_over = false
+    -- A refresh with the menu open keeps the labels snapped.
+    local snapped = true
+    for _, row in ipairs(g_frame.filter_rows) do
+        if row._shown then
+            local _, _, _, x = row.label:GetPoint(1)
+            if not (row.label.text_snap and row.label.text_snap.x == x) then
+                snapped = false
+            end
+        end
+    end
+    check(snapped, "filter labels stay snapped after an in-menu refresh")
+
+    -- A tick that was hidden when the menu opened snaps once it shows.
+    local last_row = g_frame.filter_rows[#g_frame.filter_rows]
+    for index = #g_timers, 1, -1 do
+        g_timers[index] = nil
+    end
+    last_row.on_click()
+    last_row = g_frame.filter_rows[#g_frame.filter_rows]
+    check(last_row.check._shown and last_row.check.text_snap == nil,
+        "a tick that just showed is not snapped yet")
+    for _, timer in ipairs(g_timers) do
+        if timer.delay == 0 then
+            timer.callback()
+        end
+    end
+    check(last_row.check.text_snap ~= nil, "a tick that just showed snaps a frame later")
+    last_row.on_click()
     g_frame.close_menus()
 end
 
@@ -600,9 +646,14 @@ do
         end
     end
     check(not g_set_button._enabled, "Set disabled for a secure CVar in combat")
+    local status = find_widget(function(w)
+        return w._kind == "FontString" and w._text == "Secure CVars can't change in combat."
+    end)
+    check(status ~= nil, "a secure CVar in combat shows the combat warning")
     g_in_combat = false
     fire("PLAYER_REGEN_ENABLED")
     check(g_set_button._enabled, "Set re-enabled after combat")
+    check(status and status._text == "", "leaving combat clears the combat warning")
 end
 
 -- CVAR_UPDATE casing ---------------------------------------------------------
@@ -720,6 +771,29 @@ do
     check(slant_point == "TOPLEFT" and slant_x == math.floor(slant_x)
         and slant_y == math.floor(slant_y),
         "the open-end slant is placed on whole pixels")
+
+    -- A value below an open minimum sits 20% into the track, clear of the
+    -- slant, even for a -1 sentinel with a wide range.
+    CVarBrowserDB.observed.graphicsQuality = { max = 50 }
+    g_by_name.graphicsQuality.value = "-1"
+    slash("refresh")
+    slash("graphicsQuality")
+    local cursor_x = nil
+    for _, widget in ipairs(g_widgets) do
+        if widget._kind == "FontString" and widget._text == "/" and widget._shown then
+            for _, sibling in ipairs(widget._parent._regions) do
+                if sibling.mark_width == 2 and sibling.mark_height == 8
+                    and sibling._shown then
+                    local _, _, _, x = sibling:GetPoint(1)
+                    cursor_x = x
+                end
+            end
+        end
+    end
+    check(cursor_x and math.abs(cursor_x - 17) <= 1,
+        "a negative value with an open minimum sits inside the track: "
+            .. tostring(cursor_x))
+    g_by_name.graphicsQuality.value = "9"
     CVarBrowserDB.observed.graphicsQuality = nil
     slash("refresh")
 end
@@ -752,6 +826,15 @@ do
     local copy_box = g_last_focus
     fire_script(copy_box, "OnEscapePressed")
     check(not copy_box._parent._shown, "Escape closes the copy box")
+
+    -- A Copy menu row opens the copy box for the selected CVar.
+    fire_script(g_frame.copy_button, "OnClick")
+    g_last_focus = nil
+    fire_script(g_frame.copy_rows[4], "OnClick")
+    check(g_last_focus ~= nil and g_last_focus._text == "autoLootDefault"
+        and not g_frame.copy_popup._shown,
+        "the Copy name menu row copies the selected name and closes the menu")
+    fire_script(g_last_focus, "OnEscapePressed")
 end
 
 -- Pattern search keeps escaped class letters ---------------------------------
@@ -917,6 +1000,34 @@ do
     slash("extra")
     check(selected_name() == "extra30", "a favorite stays on top in descending order")
     slash("sort name asc")
+    g_chat = {}
+    slash("sort")
+    check(chat_has("sort must be name"), "bare /cvars sort reports an error in chat")
+    local search_box = find_widget(function(w)
+        return w._kind == "EditBox" and w._scripts.OnKeyDown ~= nil
+    end)
+    check(search_box._text ~= "sort", "bare /cvars sort does not search for sort")
+    g_chat = {}
+    slash("sort name asc extra")
+    check(chat_has("sort direction must be asc or desc"),
+        "extra words after a valid sort key report a bad direction")
+    g_chat = {}
+    slash("sort type")
+    check(chat_has("sorted by type asc"), "/cvars sort reports in chat")
+    -- Chat lines are lowercase fragments after the addon prefix.
+    slash("regex on")
+    slash("regex off")
+    local sentence_case = false
+    for _, message in ipairs(g_chat) do
+        if message:match("|r %u") then
+            sentence_case = true
+        end
+    end
+    check(not sentence_case, "sort and regex chat lines start lowercase")
+    slash("sort name asc")
+    g_chat = {}
+    slash("copy name noSuchCVar")
+    check(chat_has("unknown CVar nosuchcvar"), "/cvars copy names an unknown CVar")
     slash("has:fav")
     check(g_count_text._text:match("^1 / 47") ~= nil, "has:fav keeps only favorites")
 
@@ -994,6 +1105,23 @@ do
     local point, anchor, relative_point, x, y = panel:GetPoint(1)
     check(point == "TOPLEFT" and anchor == row and relative_point == "BOTTOMLEFT"
         and x == 14 and y == -4, "the tooltip hangs below the row, in line with the name")
+
+    -- Near the window bottom the tooltip flips above the row, unless that
+    -- would come within 8px of the window top too.
+    local function reshow()
+        g_frame.hide_tooltip()
+        fire_script(row, "OnEnter")
+        timer._scripts.OnUpdate(timer, 0.6)
+        local anchor_point = panel:GetPoint(1)
+        return anchor_point
+    end
+    local frame_bottom = g_frame:GetBottom()
+    row.GetBottom = function() return frame_bottom + 10 end
+    row.GetTop = function() return frame_bottom + 32 end
+    check(reshow() == "BOTTOMLEFT", "near the window bottom the tooltip flips above the row")
+    g_frame.GetTop = function() return frame_bottom + 60 end
+    check(reshow() == "TOPLEFT", "the tooltip stays below when above would reach the window top")
+    g_frame.GetTop, row.GetBottom, row.GetTop = nil, nil, nil
 
     row._mouse_over = false
     fire_script(row, "OnLeave")
@@ -1141,10 +1269,12 @@ do
     g_last_focus:ClearFocus()
     g_frame._mouse_over = true
     g_ctrl_down = true
+    g_chat = {}
     fire_script(g_frame, "OnKeyDown", "Z")
     local call = last_set_call()
     check(call and call[1] == "extra3" and call[2] == "3" and g_frame._propagate == false,
         "Ctrl+Z over the window undoes the last set")
+    check(#g_chat == 0, "an undo from the window prints nothing to chat")
     fire_script(g_frame, "OnKeyUp", "Z")
     g_shift_down = true
     fire_script(g_frame, "OnKeyDown", "Z")
@@ -1301,6 +1431,12 @@ do
     slash("regex on")
     check(regex_title() == "Pattern search on", "the regex chip tooltip says on")
     slash("regex off")
+    -- Turning the chip off under the pointer keeps its hover border.
+    fire_script(g_frame.regex_chip, "OnClick")
+    fire_script(g_frame.regex_chip, "OnClick")
+    check(not g_frame.regex_enabled
+        and g_frame.regex_chip.borders[1]._color[1] == 0.717647,
+        "turning the regex chip off under the pointer keeps its hover border")
     slash("extra")
     g_frame.regex_chip._mouse_over = false
     fire_script(g_frame.regex_chip, "OnLeave")
@@ -1390,6 +1526,42 @@ do
     local snug = #"Size: Large" * 6.3 + 8
     check(size_button and math.abs(size_button._w - snug) < 1,
         "the Size button is a snug fit: " .. tostring(size_button and size_button._w))
+
+    -- A measured px per unit within 0.001 of 1 is float noise, so it
+    -- counts as exactly 1 (0.9999995 in game moved boxes by 0.0002px).
+    PHYSICAL_HEIGHT = 768 * 0.9999995
+    fire_script(large_row, "OnClick", "LeftButton")
+    check(g_frame.px_per_unit == 1, "a px per unit within 0.001 of 1 counts as 1: "
+        .. tostring(g_frame.px_per_unit))
+    PHYSICAL_HEIGHT = 1440
+    fire_script(large_row, "OnClick", "LeftButton")
+    check(g_frame.px_per_unit == PX, "the px per unit is measured again after a change")
+
+    -- Snap corrections under 0.01px are noise and leave the anchor alone.
+    local probe = g_frame:CreateTexture()
+    probe:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 10, -10)
+    probe.GetLeft = function() return 100 / PX + 0.001 / PX end
+    probe.GetTop = function() return 500 / PX - 0.001 / PX end
+    g_frame.snap_box(probe)
+    local _, _, _, probe_x, probe_y = probe:GetPoint(1)
+    check(probe_x == 10 and probe_y == -10, "a sub-0.01px snap correction is ignored")
+    probe.GetLeft = function() return 100 / PX + 0.3 / PX end
+    g_frame.snap_box(probe)
+    _, _, _, probe_x = probe:GetPoint(1)
+    check(math.abs((probe_x - 10) * PX + 0.3) < 1e-6, "a 0.3px snap correction applies")
+    probe:Hide()
+
+    -- The Changed only tick snaps the first time it shows.
+    local changed_button = button_with_label("Changed only")
+    local tick = find_widget(function(w)
+        return w._kind == "FontString" and w._text == "✓"
+            and w._parent._parent == changed_button
+    end)
+    check(tick and tick.text_snap == nil, "the Changed only tick starts unsnapped")
+    fire_script(changed_button, "OnClick", "LeftButton")
+    check(tick and tick._shown and tick.text_snap ~= nil,
+        "the Changed only tick snaps when first checked")
+    fire_script(changed_button, "OnClick", "LeftButton")
     CVarBrowserDB.preset = "auto"
 end
 

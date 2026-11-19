@@ -182,6 +182,12 @@ across rows. Domain is the union of help and observed bounds.
 - **Open bound**: a single font glyph at the open end — `/` for a missing
   minimum, `\` for a missing maximum — centered on the track edge. No cap and
   no stroke texture.
+- **Open domain**: an open maximum is 1.25× the largest of the value, 1,
+  and the minimum + 1. An open minimum floors at 0 (or at a negative
+  maximum). A value below that floor sets the domain min to
+  `value − (max − value) / 4`, which puts the value 20% into the track and
+  mirrors the open maximum's headroom, so its cursor clears the `/` glyph
+  instead of pinning at x=0.
 - **Pixel grid**: every drawn mark is an unrotated, integer-snapped texture —
   track 88×1 on row 3, help ticks 1×3 (rows 2–4), observed ticks 1×6
   (rows 1–6), cursor and clamp cap 2×8. A w×h mark centers on its value's
@@ -628,10 +634,13 @@ across rows. Domain is the union of help and observed bounds.
   | Normalized | `<cvar> normalized to <value>` | warning |
   | Undo / redo | `Undid <cvar> to <value>` / `Redid <cvar> to <value>` | success |
   | Undo / redo failed | `Undo of <cvar> was refused`, `Undo of <cvar> did not stick` (Redo alike) | error |
+  | Undo / redo target gone | `Undo failed because <cvar> no longer exists` / `Redo failed because <cvar> no longer exists` | error |
+  | Undo / redo blocked | `Undo of <cvar> is blocked in its current state` / `Redo of <cvar> is blocked in its current state` | error |
 
   Reset fills in the default and runs the Set path, so an accepted reset
   reads `Set <cvar> = <default>`. Selecting a secure CVar in combat shows
-  `Secure CVars can't change in combat.` in `warning` before any Set.
+  `Secure CVars can't change in combat.` in `warning` before any Set. If
+  that warning is still showing when combat ends, it clears.
 - **Semantic key**: glossary marks with plain-language labels, in the
   row's left-to-right order: filled favorite diamond (the toggle's 7×7
   pixels, all 17 textures in `text`) = favorite; changed lilac text =
@@ -761,8 +770,9 @@ across rows. Domain is the union of help and observed bounds.
   physical screen height (see Size presets).
 - Undo/redo: every accepted Set or Reset pushes one history entry and
   clears the redo stack. Undo restores the previous value (selecting that
-  row); redo re-applies it. The status line and chat say `Undid <cvar> to
-  <value>` or `Redid <cvar> to <value>`. Disabled buttons cannot fire.
+  row); redo re-applies it. The status line says `Undid <cvar> to <value>`
+  or `Redid <cvar> to <value>`. Chat echoes it only for `/cvars undo` and
+  `/cvars redo`. Disabled buttons cannot fire.
   Shortcuts: Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, under the Keyboard rule (no edit box
   focused, out of combat, cursor over the window), so an edit box keeps
   its own keys.

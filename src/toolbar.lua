@@ -6,7 +6,7 @@ local _, ns = ...
 -- Localized WoW APIs ---------------------------------------------------------
 
 local CreateFrame = CreateFrame
-local SlashCmdList = SlashCmdList
+local C_Timer = C_Timer
 local pairs, ipairs = pairs, ipairs
 local floor, min, max = math.floor, math.min, math.max
 local sort, concat = table.sort, table.concat
@@ -18,7 +18,6 @@ local COLORS = ns.COLORS
 local FONT_BODY = ns.FONT_BODY
 local FONT_META = ns.FONT_META
 local FONT_CHECK = ns.FONT_CHECK
-local round = ns.round
 local make_text = ns.make_text
 local apply_backdrop = ns.apply_backdrop
 local snap_texture = ns.snap_texture
@@ -26,14 +25,19 @@ local set_texture_color = ns.set_texture_color
 local set_text_color = ns.set_text_color
 local g_hairline = ns.g_hairline
 local create_button = ns.create_button
+local fit_text_button = ns.fit_text_button
 local g_entries = ns.g_entries
 local g_changed_button = ns.g_changed_button
-local g_changed_tick = ns.g_changed_tick
 
 do
     local function set_chip_active(button, active)
         button.active = active and true or false
-        local color = button.active and COLORS.accent or COLORS.border
+        -- A chip under the pointer keeps the hover border until OnLeave
+        -- restores it.
+        local hovered = button:IsVisible() and button:IsEnabled()
+            and button:IsMouseOver()
+        local color = (button.active or hovered) and COLORS.accent
+            or COLORS.border
         g_hairline.set_color(button.borders, color)
         set_text_color(
             button.label,
@@ -96,13 +100,6 @@ do
         { "favorite", "Favorite" },
     }
 
-    local function run_command(text)
-        local handler = SlashCmdList and SlashCmdList.CVARBROWSER
-        if handler then
-            handler(text)
-        end
-    end
-
     local function create_menu_row(parent, height)
         local row = CreateFrame("Button", nil, parent)
         row:SetHeight(height)
@@ -142,19 +139,6 @@ do
         popup:Hide()
         apply_backdrop(popup, COLORS.surface, COLORS.border)
         return popup
-    end
-
-    local function fit_chip(button, minimum, left_padding)
-        button:SetWidth(
-            max(
-                minimum,
-                round(
-                    left_padding
-                        + button.label:GetStringWidth()
-                        + 6
-                )
-            )
-        )
     end
 
     g_frame.filter_chip = create_button(g_frame, "Filters off", 104, 26)
@@ -557,6 +541,14 @@ do
         popup:Show()
         g_frame.snap_box(popup)
         g_frame.snap_region_tree(popup)
+        -- Labels anchored for the first time still read their old rect, so
+        -- snap once more on the next frame.
+        g_frame.filter_needs_snap = false
+        C_Timer.After(0, function()
+            if popup:IsShown() then
+                g_frame.snap_region_tree(popup)
+            end
+        end)
     end
 
     g_frame.menu_catcher:SetScript("OnMouseDown", function()
@@ -588,10 +580,23 @@ do
         row:SetPoint("TOPRIGHT", g_frame.filter_content, "TOPRIGHT", 0, -y)
     end
 
+    -- Re-anchoring a label throws away its pixel snap, and the snap cannot
+    -- run right away because the label's rect still reads its old place
+    -- (a refresh that snapped at once left labels 1px off every other
+    -- click). So a label moves only when its inset changes, and the
+    -- refresh snaps such rows a frame later.
+    local function set_label_inset(row, inset)
+        if row.label_inset ~= inset then
+            row.label:ClearAllPoints()
+            row.label:SetPoint("LEFT", row, "LEFT", inset, 0)
+            row.label_inset = inset
+            g_frame.filter_needs_snap = true
+        end
+    end
+
     local function add_filter_group(label, y)
         local row = take_filter_row()
-        row.label:ClearAllPoints()
-        row.label:SetPoint("LEFT", row, "LEFT", 4, 0)
+        set_label_inset(row, 4)
         row.label:SetText(label)
         set_text_color(row.label, COLORS.muted)
         row:SetEnabled(false)
@@ -602,12 +607,15 @@ do
 
     local function add_filter_option(label, checked, on_click, y)
         local row = take_filter_row()
-        row.label:ClearAllPoints()
-        row.label:SetPoint("LEFT", row, "LEFT", 24, 0)
+        set_label_inset(row, 24)
         row.label:SetText(label)
         set_text_color(row.label, COLORS.text)
         if checked then
             row.check:Show()
+            -- A tick hidden at every snap so far has never been snapped.
+            if not row.check.text_snap then
+                g_frame.filter_needs_snap = true
+            end
         end
         row.on_click = on_click
         row:EnableMouse(true)
@@ -717,6 +725,16 @@ do
             min(scroll, g_frame.filter_scroll:GetVerticalScrollRange() or 0)
         )
         update_filter_scrollbar()
+        -- A label that moved snaps a frame later, once its rect reads the
+        -- new place.
+        if g_frame.filter_needs_snap and g_frame.filter_popup:IsShown() then
+            g_frame.filter_needs_snap = false
+            C_Timer.After(0, function()
+                if g_frame.filter_popup:IsShown() then
+                    g_frame.snap_region_tree(g_frame.filter_popup)
+                end
+            end)
+        end
     end
 
     g_frame.update_filter_chip = function()
@@ -724,7 +742,8 @@ do
         g_frame.filter_chip.label:SetText(
             count > 0 and ("Filters " .. count) or "Filters off"
         )
-        fit_chip(g_frame.filter_chip, 80, 18)
+        -- 18px left of the label for the icon, 6px right.
+        fit_text_button(g_frame.filter_chip, 80, 24)
         set_chip_active(g_frame.filter_chip, count > 0)
         g_frame.snap_box(g_frame.filter_chip)
     end
@@ -734,8 +753,7 @@ do
         g_frame.filters.category = ""
         g_frame.filters.type = ""
         g_frame.filters.has = {}
-        g_changed_button.checked = false
-        g_changed_tick:Hide()
+        g_changed_button.set_checked(false)
         g_frame.refresh_filter_menu()
         g_frame.update_filter_chip()
         g_frame.rebuild_results()
@@ -788,10 +806,6 @@ do
                 g_frame.sort_rows[index] = row
             end
             row:Show()
-            row:EnableMouse(true)
-            row:SetAlpha(1)
-            row.label:ClearAllPoints()
-            row.label:SetPoint("LEFT", row, "LEFT", 24, 0)
             row.label:SetText(labels[sort_option])
             set_text_color(row.label, COLORS.text)
             row.note:SetText(
@@ -808,7 +822,7 @@ do
         g_frame.sort_chip.label:SetText(
             "Sort " .. g_frame.sort_key .. " " .. g_frame.sort_dir
         )
-        fit_chip(g_frame.sort_chip, 100, 18)
+        fit_text_button(g_frame.sort_chip, 100, 24)
         set_chip_active(
             g_frame.sort_chip,
             g_frame.sort_key ~= "name" or g_frame.sort_dir ~= "asc"
@@ -845,11 +859,11 @@ do
                     0,
                     -(index - 1) * 22 - 4
                 )
+                row.label:ClearAllPoints()
+                row.label:SetPoint("LEFT", row, "LEFT", 8, 0)
                 g_frame.copy_rows[index] = row
             end
             row:Show()
-            row.label:ClearAllPoints()
-            row.label:SetPoint("LEFT", row, "LEFT", 8, 0)
             row.label:SetText(field[2])
             set_text_color(row.label, COLORS.text)
             row.check:Hide()
@@ -860,9 +874,12 @@ do
             local missing = selected == nil or empty
             row.note:SetText(empty and "none" or "")
             set_enabled(row, not missing)
+            -- commands.lua loads later and sets g_frame.copy_field.
             row.on_click = function()
                 g_frame.close_menus()
-                run_command("copy " .. copy_key)
+                if g_frame.selected then
+                    g_frame.copy_field(g_frame.selected, copy_key)
+                end
             end
         end
     end
@@ -967,12 +984,13 @@ do
         end
     end)
 
+    -- commands.lua loads later and sets g_frame.step_history.
     g_frame.undo_button:SetScript("OnClick", function()
-        run_command("undo")
+        g_frame.step_history("undo", true)
     end)
 
     g_frame.redo_button:SetScript("OnClick", function()
-        run_command("redo")
+        g_frame.step_history("redo", true)
     end)
 
     g_frame.update_regex_chip = function()

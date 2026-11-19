@@ -784,6 +784,11 @@ function gaugeFor(cvar) {
   let domainMax = knownMax;
   if (domainMin == null) {
     domainMin = Math.min(0, domainMax);
+    // A value below the floor sits 20% into the track, mirroring the open
+    // maximum's 25% headroom, so its cursor clears the open-end glyph.
+    if (value < domainMin) {
+      domainMin = value - (domainMax - value) / 4;
+    }
   }
   if (domainMax == null) {
     const upper = Math.max(value, 0, domainMin + 1, 1);
