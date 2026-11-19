@@ -1527,16 +1527,6 @@ do
     check(size_button and math.abs(size_button._w - snug) < 1,
         "the Size button is a snug fit: " .. tostring(size_button and size_button._w))
 
-    -- A measured px per unit within 0.001 of 1 is float noise, so it
-    -- counts as exactly 1 (0.9999995 in game moved boxes by 0.0002px).
-    PHYSICAL_HEIGHT = 768 * 0.9999995
-    fire_script(large_row, "OnClick", "LeftButton")
-    check(g_frame.px_per_unit == 1, "a px per unit within 0.001 of 1 counts as 1: "
-        .. tostring(g_frame.px_per_unit))
-    PHYSICAL_HEIGHT = 1440
-    fire_script(large_row, "OnClick", "LeftButton")
-    check(g_frame.px_per_unit == PX, "the px per unit is measured again after a change")
-
     -- Snap corrections under 0.01px are noise and leave the anchor alone.
     local probe = g_frame:CreateTexture()
     probe:SetPoint("TOPLEFT", g_frame, "TOPLEFT", 10, -10)

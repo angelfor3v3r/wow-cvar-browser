@@ -281,13 +281,6 @@ local function apply_ui_scale()
     if not px_per_unit or px_per_unit <= 0 then
         px_per_unit = 1
     end
-    -- The scale above is exact, so a reading within 0.001 of 1 is float
-    -- noise from GetScaledRect. Keeping that noise (0.9999995 in game) put
-    -- the window 0.001px off the grid at large coordinates, and snapping
-    -- then flipped boxes between 1009.9999 and 1010.0001 on every update.
-    if abs(px_per_unit - 1) < 1e-3 then
-        px_per_unit = 1
-    end
     g_frame.px_per_unit = px_per_unit
     g_frame:SetSize(preset.width, preset.height)
 
