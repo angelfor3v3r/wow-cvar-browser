@@ -879,13 +879,14 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
   position: absolute;
   left: 24px; right: 24px; bottom: 14px;
   height: 20px;
-  display: flex; align-items: center; gap: 16px;
+  display: flex; align-items: center;
   border-top: 1px solid var(--border);
   padding-top: 4px;
   color: var(--muted);
   font-size: var(--small-size);
 }
-.key-item { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+/* Entry boxes and gaps are set by layoutKeyRow in mockup.js. */
+.key-item { flex: none; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 .key-mark { width: 8px; height: 8px; display: inline-block; }
 .key-changed-label { color: var(--changed); }
 .key-observed-ticks {
@@ -900,10 +901,9 @@ select:focus { outline: 1px solid var(--lab-accent); outline-offset: 1px; }
 .key-current { width: 2px; height: 8px; background: var(--text); }
 /* The filled 7x7 favorite diamond, the same pixels as the row mark. */
 .key-favorite { width: 7px; height: 7px; fill: var(--text); shape-rendering: crispEdges; }
-.key-open-marks { width: 14px; height: 8px; margin: 0 4px; vertical-align: -1px; shape-rendering: crispEdges; }
+.key-open-marks { width: 14px; height: 8px; shape-rendering: crispEdges; }
 .key-open-marks line { stroke: var(--muted); stroke-width: 1; opacity: .75; }
-.key-dot { display: inline-block; width: 2px; height: 2px; background: var(--dot); margin: 0 4px; vertical-align: middle; }
-.key-hint { margin-left: auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.key-dot { display: inline-block; width: 2px; height: 2px; background: var(--dot); }
 
 @media (max-width: 1000px) {
   .stage { overflow-x: auto; justify-content: flex-start; }

@@ -557,6 +557,17 @@ do
     g_frame.snap_region_tree(g_frame.filter_chip)
     check(label.text_snap and label.text_snap.base_x == 18 and label.text_snap.base_y == 0,
         "text snapping keeps the design offset through float rounding")
+    -- Text lands a quarter pixel past a whole pixel, clear of the positions
+    -- where the client flips text or boxes to the next pixel.
+    local holder = CreateFrame("Frame", nil, g_frame)
+    local fresh = holder:CreateFontString()
+    fresh:SetPoint("LEFT", holder, "LEFT", 5, 0)
+    g_frame.snap_region_tree(holder)
+    local _, _, _, fresh_x = fresh:GetPoint(1)
+    local landed = (100.37 + fresh_x - 5) * PX
+    check(math.abs(landed - math.floor(landed) - 0.25) < 1e-6,
+        "text snaps a quarter pixel past a whole pixel: " .. landed)
+    holder:Hide()
 
     g_frame.filters.scope = "account"
     g_frame.update_filter_chip()
@@ -654,6 +665,28 @@ do
     fire("PLAYER_REGEN_ENABLED")
     check(g_set_button._enabled, "Set re-enabled after combat")
     check(status and status._text == "", "leaving combat clears the combat warning")
+end
+
+-- Exact name match ------------------------------------------------------------
+
+do
+    -- A name that is also part of other names picks the exact CVar, not
+    -- the row that sorts first.
+    slash("sort name desc")
+    slash("extra1")
+    check(g_frame.view[1] and g_frame.view[1].name == "extra19",
+        "extra1 also matches names that sort ahead of it")
+    check(selected_name() == "extra1", "/cvars <name> selects the exact CVar")
+    local search_box = find_widget(function(w)
+        return w._kind == "EditBox" and w._scripts.OnKeyDown ~= nil
+    end)
+    search_box:SetText("EXTRA2")
+    fire_script(search_box, "OnEnterPressed")
+    check(selected_name() == "extra2", "search Enter selects the exact CVar in any case")
+    search_box:SetText("extra")
+    fire_script(search_box, "OnEnterPressed")
+    check(selected_name() == "extra9", "with no exact name the top row is selected")
+    slash("sort name asc")
 end
 
 -- CVAR_UPDATE casing ---------------------------------------------------------
@@ -1028,6 +1061,20 @@ do
     g_chat = {}
     slash("copy name noSuchCVar")
     check(chat_has("unknown CVar nosuchcvar"), "/cvars copy names an unknown CVar")
+
+    -- A typo prints its error without opening a hidden window, and a real
+    -- name opens it.
+    g_frame:Hide()
+    g_chat = {}
+    slash("copy name noSuchCVar")
+    slash("fav noSuchCVar")
+    check(not g_frame:IsShown() and #g_chat == 2,
+        "copy and fav with an unknown name leave a hidden window hidden")
+    g_last_focus = nil
+    slash("copy name extra5")
+    check(g_frame:IsShown() and g_last_focus and g_last_focus._text == "extra5",
+        "copy with a real name opens a hidden window")
+    fire_script(g_last_focus, "OnEscapePressed")
     slash("has:fav")
     check(g_count_text._text:match("^1 / 47") ~= nil, "has:fav keeps only favorites")
 
@@ -1497,6 +1544,58 @@ do
     slash("extra")
 end
 
+-- Footer key ------------------------------------------------------------------
+
+do
+    -- Seven entries spread across the row. The first starts at the left
+    -- edge, the last ends at the right edge, and the gaps are equal to
+    -- the pixel.
+    local entries = {
+        { "Favorite", 7 }, { "Differs from default", nil }, { "Observed bounds", 12 },
+        { "Read-only", 9 }, { "Current value", 2 }, { "No limit", 14 },
+        { "No known range", 2 },
+    }
+    local function measure()
+        local row_start, gaps, row_end, shown = nil, {}, 0, 0
+        for index, entry in ipairs(entries) do
+            local label = find_widget(function(w)
+                return w._kind == "FontString" and w._text == entry[1]
+            end)
+            local _, _, _, x = label:GetPoint(1)
+            local start = x - (entry[2] and entry[2] + 8 or 0)
+            if index == 1 then
+                row_start = start
+            else
+                gaps[#gaps + 1] = start - row_end
+            end
+            row_end = x + math.floor(label:GetStringWidth() + 0.5)
+            shown = shown + (label._shown and 1 or 0)
+        end
+        return row_start, gaps, row_end, shown
+    end
+    local row_width = g_frame._w - 48
+    local row_start, gaps, row_end, shown = measure()
+    local smallest, largest = math.huge, 0
+    for _, gap in ipairs(gaps) do
+        smallest = math.min(smallest, gap)
+        largest = math.max(largest, gap)
+    end
+    -- Text snapping at the stub's 1.875 px per unit moves labels by under
+    -- a unit.
+    check(math.abs(row_start) < 1 and math.abs(row_end - row_width) < 1 and shown == 7,
+        "the footer key spans the row edge to edge: " .. row_end .. " of " .. row_width)
+    check(smallest >= 16 and largest - smallest <= 1,
+        "the footer key gaps are equal to the pixel: " .. smallest .. " to " .. largest)
+
+    -- A row too narrow for 16px gaps flows from the left and hides what
+    -- does not fit.
+    g_frame.layout_key_row(400)
+    row_start, gaps, row_end, shown = measure()
+    check(gaps[1] == 16 and shown > 0 and shown < 7,
+        "a narrow footer key falls back to 16px gaps and hides the overflow: " .. shown)
+    g_frame.layout_key_row(row_width)
+end
+
 -- Size switch ----------------------------------------------------------------
 
 do
@@ -1553,6 +1652,29 @@ do
         "the Changed only tick snaps when first checked")
     fire_script(changed_button, "OnClick", "LeftButton")
     CVarBrowserDB.preset = "auto"
+end
+
+-- Window snap deadband --------------------------------------------------------
+
+do
+    -- A layout pass leaves the window alone when it reads within 0.01px of
+    -- a whole pixel, and moves it when it is really off the grid.
+    local function offsets_after(off_px)
+        g_frame.GetLeft = function() return (188 + off_px) / PX end
+        g_frame.GetTop = function() return (940 - off_px) / PX end
+        g_frame:ClearAllPoints()
+        g_frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", 100, 500)
+        fire("UI_SCALE_CHANGED")
+        local _, _, _, x, y = g_frame:GetPoint(1)
+        g_frame.GetLeft, g_frame.GetTop = nil, nil
+        return x, y
+    end
+    local x, y = offsets_after(0.002)
+    check(x == 100 and y == 500, "a 0.002px window correction is ignored")
+    x, y = offsets_after(0.3)
+    check(x ~= 100 and y ~= 500, "a 0.3px window correction applies")
+    g_frame:ClearAllPoints()
+    g_frame:SetPoint("CENTER")
 end
 
 -- Pixel-locked window drag ---------------------------------------------------

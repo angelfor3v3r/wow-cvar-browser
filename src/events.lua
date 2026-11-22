@@ -23,6 +23,7 @@ local g_frame = ns.g_frame
 local ROW_HEIGHT = ns.ROW_HEIGHT
 local ROW_COUNT = ns.ROW_COUNT
 local COLORS = ns.COLORS
+local trim = ns.trim
 local clamp = ns.clamp
 local round = ns.round
 local g_hairline = ns.g_hairline
@@ -265,12 +266,39 @@ g_search_box:SetScript("OnEditFocusLost", function()
     end
 end)
 
+-- Selects the best match for the search text and returns it. A CVar whose
+-- name is exactly the search text wins and scrolls into view. Otherwise it
+-- is the top row. "TurnSpeed" used to pick "GamePadTankTurnSpeed", which
+-- sorts first.
+g_frame.select_best_match = function()
+    local query = trim(g_search_box:GetText() or ""):lower()
+    local best = g_frame.view[1]
+    local exact = g_frame.by_name[query]
+    if exact and exact ~= best then
+        for position, entry in ipairs(g_frame.view) do
+            if entry == exact then
+                best = exact
+                scroll_to((position - 1) * ROW_HEIGHT, false)
+                break
+            end
+        end
+    end
+    if best then
+        select_entry(best)
+    end
+    return best
+end
+
 g_search_box:SetScript("OnEnterPressed", function(self)
     -- Enter keeps a row picked with the arrow keys. Otherwise it takes the
-    -- top match.
-    local entry = self.navigated and g_frame.selected or g_frame.view[1]
-    if entry then
+    -- best match.
+    local entry = g_frame.selected
+    if self.navigated and entry then
         select_entry(entry)
+    else
+        entry = g_frame.select_best_match()
+    end
+    if entry then
         if can_edit(entry) then
             g_detail_edit:SetFocus()
             g_detail_edit:HighlightText()

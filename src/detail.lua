@@ -6,6 +6,7 @@ local _, ns = ...
 
 local CreateFrame = CreateFrame
 local ipairs = ipairs
+local floor = math.floor
 
 -- Shared from earlier files --------------------------------------------------
 
@@ -207,80 +208,67 @@ do
         return mark
     end
 
-    -- Flow layout of the hint marks. 4px margins on both sides of the slant
-    -- group and the dot (the mockup's .key-dot margin).
-    local function layout_hint(hint_frame)
-        local x = 0
-        hint_frame.first:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
-        x = round(x + hint_frame.first:GetStringWidth()) + 4
-        hint_frame.slants:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
-        x = round(x + 14) + 4
-        hint_frame.second:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
-        x = round(x + hint_frame.second:GetStringWidth()) + 4
-        hint_frame.dot:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
-        x = round(x + 2) + 4
-        hint_frame.third:SetPoint("LEFT", hint_frame, "LEFT", x, 0)
-        x = round(x + hint_frame.third:GetStringWidth())
-        hint_frame:SetWidth(x)
-    end
-
-    local function create_hint(parent)
-        local hint_frame = CreateFrame("Frame", nil, parent)
-        hint_frame:SetHeight(20)
-        hint_frame.first = make_text(
-            hint_frame,
-            FONT_META,
-            "Slanted end",
-            COLORS.muted
-        )
-        hint_frame.slants = create_slant_marks(hint_frame)
-        hint_frame.second = make_text(
-            hint_frame,
-            FONT_META,
-            "means no limit. Dot",
-            COLORS.muted
-        )
-        hint_frame.dot = create_dot(hint_frame)
-        hint_frame.third = make_text(
-            hint_frame,
-            FONT_META,
-            "means no known range.",
-            COLORS.muted
-        )
-        hint_frame:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
-        layout_hint(hint_frame)
-        return hint_frame
-    end
-
-    -- Semantic key entries in flow order. Each is { region, fixed width or nil
-    -- to measure the text, gap after }. 8px mark-to-label, 16px between entries.
+    -- Semantic key entries, left to right. Each is { mark or nil, mark
+    -- width, label }. The mark sits 8px before its label.
     local key_items = {
-        { g_frame.create_diamond(g_key), 7, 8 },
-        { make_text(g_key, FONT_META, "Favorite", COLORS.muted), nil, 16 },
-        { make_text(g_key, FONT_META, "Differs from default", COLORS.changed), nil, 16 },
-        { create_observed_ticks(g_key), 12, 8 },
-        { make_text(g_key, FONT_META, "Observed bounds", COLORS.muted), nil, 16 },
-        { create_readonly_mark(g_key), 9, 8 },
-        { make_text(g_key, FONT_META, "Read-only", COLORS.muted), nil, 16 },
-        { create_current_mark(g_key), 2, 8 },
-        { make_text(g_key, FONT_META, "Current value", COLORS.muted), nil, 0 },
+        { g_frame.create_diamond(g_key), 7, "Favorite" },
+        { nil, 0, "Differs from default" },
+        { create_observed_ticks(g_key), 12, "Observed bounds" },
+        { create_readonly_mark(g_key), 9, "Read-only" },
+        { create_current_mark(g_key), 2, "Current value" },
+        { create_slant_marks(g_key), 14, "No limit" },
+        { create_dot(g_key), 2, "No known range" },
     }
-    g_frame.paint_diamond(key_items[1][1], COLORS.text, true)
-    local hint = create_hint(g_key)
-
-    -- Re-run after font resizes so measured advances never drift from
-    -- rendered text.
-    g_frame.layout_key_row = function()
-        local key_x = 0
-        for index = 1, #key_items do
-            local item = key_items[index]
-            local region = item[1]
-            region:SetPoint("LEFT", g_key, "LEFT", key_x, 0)
-            key_x = round(key_x + (item[2] or region:GetStringWidth())) + item[3]
-        end
-        layout_hint(hint)
+    for _, item in ipairs(key_items) do
+        item[3] = make_text(
+            g_key,
+            FONT_META,
+            item[3],
+            item[1] and COLORS.muted or COLORS.changed
+        )
     end
-    g_frame.layout_key_row()
+    g_frame.paint_diamond(key_items[1][1], COLORS.text, true)
+
+    -- Spreads the entries across the row with equal whole-pixel gaps. The
+    -- first starts at the left edge, the last ends at the right edge, and
+    -- leftover pixels go to the leftmost gaps. If a gap would fall under
+    -- 16px the row becomes a 16px flow from the left, and entries that no
+    -- longer fit are hidden whole. Re-run after font resizes so measured
+    -- advances never drift from rendered text.
+    g_frame.layout_key_row = function(row_width)
+        local widths = {}
+        local free = row_width
+        for index, item in ipairs(key_items) do
+            local width = round(item[3]:GetStringWidth())
+            if item[1] then
+                width = width + item[2] + 8
+            end
+            widths[index] = width
+            free = free - width
+        end
+        local slots = #key_items - 1
+        local spread = free >= slots * 16
+        local gap = spread and floor(free / slots) or 16
+        local extra = spread and free - gap * slots or 0
+        local x = 0
+        local fits = true
+        for index, item in ipairs(key_items) do
+            if index > 1 then
+                x = x + gap + (index - 1 <= extra and 1 or 0)
+            end
+            fits = fits and x + widths[index] <= row_width
+            local label_x = x
+            if item[1] then
+                item[1]:SetPoint("LEFT", g_key, "LEFT", x, 0)
+                item[1]:SetShown(fits)
+                label_x = x + item[2] + 8
+            end
+            item[3]:SetPoint("LEFT", g_key, "LEFT", label_x, 0)
+            item[3]:SetShown(fits)
+            x = x + widths[index]
+        end
+    end
+    g_frame.layout_key_row(METRICS.frame_width - 48)
 end
 
 -- Shared with the files loaded after this one.

@@ -124,6 +124,11 @@ local UNDO_LIMIT = 20
 -- them made boxes flip between 1009.9999 and 1010.0001 on every update, and
 -- text drawn at those two places lands on different pixels.
 local SNAP_DEADBAND_PX = 0.01
+-- Text snaps this far past a whole pixel on both axes. Moving the window in
+-- game showed text flips pixels right at a whole-pixel position, while
+-- boxes and lines flip at the half pixel. A quarter pixel is clear of both,
+-- so float noise in the window position cannot move text.
+local TEXT_SNAP_BIAS_PX = 0.25
 
 -- Fonts ----------------------------------------------------------------------
 
@@ -451,9 +456,15 @@ g_frame.snap_line = function(region)
     end
 end
 
+-- The nearest text position, a quarter pixel past a whole pixel.
+local function text_grid(px)
+    return round(px - TEXT_SNAP_BIAS_PX) + TEXT_SNAP_BIAS_PX
+end
+
 -- Snaps every texture rect in the tree to the pixel grid at rest so edges
--- stay one physical pixel, and moves single-anchor text origins onto whole
--- pixels. Text left at a half-pixel offset (centered or right-anchored
+-- stay one physical pixel, and moves single-anchor text origins a quarter
+-- pixel past whole pixels (see TEXT_SNAP_BIAS_PX). Text left at a half-pixel
+-- offset (centered or right-anchored
 -- labels with odd/fractional widths) rounds either way depending on the
 -- frame's absolute position, so it shifted 1px while dragging (seen in
 -- game on the "Value" header). The shift here is under half a pixel, so
@@ -503,9 +514,9 @@ g_frame.snap_region_tree = function(region)
                 local raw_left = left - (x - base_x)
                 local raw_top = top - (y - base_y)
                 local snapped_x = base_x
-                    + round(raw_left * px_per_unit) / px_per_unit - raw_left
+                    + text_grid(raw_left * px_per_unit) / px_per_unit - raw_left
                 local snapped_y = base_y
-                    + round(raw_top * px_per_unit) / px_per_unit - raw_top
+                    + text_grid(raw_top * px_per_unit) / px_per_unit - raw_top
                 if is_on_grid(snapped_x - x, px_per_unit)
                     and is_on_grid(snapped_y - y, px_per_unit) then
                     snapped_x, snapped_y = x, y
@@ -1125,6 +1136,7 @@ ns.METRICS = METRICS
 ns.ROW_HEIGHT = ROW_HEIGHT
 ns.ROW_COUNT = ROW_COUNT
 ns.GAUGE_WIDTH = GAUGE_WIDTH
+ns.SNAP_DEADBAND_PX = SNAP_DEADBAND_PX
 ns.META_MAX_PARTS = META_MAX_PARTS
 ns.COLORS = COLORS
 ns.DB_DEFAULTS = DB_DEFAULTS

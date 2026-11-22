@@ -153,14 +153,17 @@ label and menu selection only.
 │  ASSAO Fade Out To [0.0, ~ ] Distance at which the effect fades out. │
 │  [ 50.0                    ] [ Set ] [ Reset to default ]  status    │
 ├──────────────────────────────────────────────────────────────────────┤
-│  ◆ Favorite  Differs from default  ┃┃ Observed bounds  □ Read-only … │
-│  Slanted end [slants] means no limit. Dot [dot] means no known range.  │
+│  ◆ Favorite  Differs from default  …  /\ No limit  · No known range  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 `◆` is a favorite (filled mark); `◇` is the hollow mark the hovered or
 selected row shows when it is not a favorite. Favorites sit above every
 other row.
+
+The bottom line is the semantic key, one row spread edge to edge. The `…`
+stands for Observed bounds, Read-only, and Current value, which do not fit
+the diagram's width.
 
 The toolbar keeps its row (search, regex toggle, Changed only, count); a
 second 26px control row holds filters, sort, history, and copy.
@@ -641,24 +644,46 @@ across rows. Domain is the union of help and observed bounds.
   reads `Set <cvar> = <default>`. Selecting a secure CVar in combat shows
   `Secure CVars can't change in combat.` in `warning` before any Set. If
   that warning is still showing when combat ends, it clears.
-- **Semantic key**: glossary marks with plain-language labels, in the
-  row's left-to-right order: filled favorite diamond (the toggle's 7×7
-  pixels, all 17 textures in `text`) = favorite; changed lilac text =
-  differs from default; tally ticks (12×8: two 1×6 ticks 10px apart,
-  rows 1–6) = observed
-  bounds; hollow square (9×9, 1px lines) = read-only; cursor (2×8) = current
-  value. Entries sit 16px apart, marks 8px from their labels. The favorite
-  entry is first: `key_items` gains `{ favorite mark, 7, 8 }` and
-  `{ "Favorite" FONT_META muted, nil, 16 }` ahead of "Differs from
-  default"; the mark frame is 7×7, `LEFT` anchored like the other marks.
-  The row stays clear of the right-aligned hint at every preset
-  (approximate widths, key entries plus hint: ≈690 of 752px at Compact,
-  ≈760 of 872 at Standard, ≈830 of 992 at Large). The hint shows
-  the marks inline as the runtime draws them: two font glyphs `/ \` in a
-  14px group and the 2px `--dot` dot identical to the unknown-range dot.
-  Copy: "Slanted end [slants] means no limit. Dot [dot] means no known
-  range." Clamp and refused outcomes are stated by the status line when they
-  happen.
+- **Semantic key**: one row of seven glossary entries, read left to
+  right: Favorite, Differs from default, Observed bounds, Read-only,
+  Current value, No limit, No known range. The first five follow the
+  list row's own order, and the last two explain the gauge's open and
+  unknown ends. Each entry is a mark, 8px, then its label, all
+  vertically centered and `LEFT` anchored. Labels are `FONT_META` muted,
+  except "Differs from default", which has no mark and is drawn in
+  `changed` (the changed name is its own mark). Marks: the filled
+  favorite diamond (the toggle's 7×7 pixels, all 17 textures in `text`);
+  tally ticks (12×8, two 1×6 `observed` ticks 10px apart on rows 1–6);
+  the hollow read-only square (9×9, 1px muted lines); the current-value
+  cursor (2×8 in `text`); the slant pair (two font glyphs `/ \` in a 14px
+  group); the 2px `--dot` dot (the same dot as the unknown-range gauge).
+  There is no separate right-aligned hint group. The slant and dot entries
+  are ordinary entries in the same list.
+
+  Entries are spread across the whole row. The first starts at x=0, the
+  last ends at the row's right edge, and the six gaps between entries are
+  equal to the pixel. `layout_key_row` runs this at load and after every
+  font resize:
+
+  1. Entry width `w = mark width + 8 + round(label:GetStringWidth())`,
+     or just the rounded label width for "Differs from default".
+  2. `free = row width − Σw`, with the row width from `g_key` (752, 872,
+     992).
+  3. If `free ≥ 96` (six gaps of at least 16px): `gap = floor(free / 6)`
+     and `extra = free − 6 × gap` (0 to 5). The leftmost `extra` gaps get
+     `gap + 1`, the rest `gap`. Each entry sits at
+     `x = Σ(earlier widths) + Σ(earlier gaps)`, all whole pixels, and the
+     last entry ends exactly at the row width.
+  4. Otherwise fall back to a left flow with fixed 16px gaps. Any entry
+     whose right edge would pass the row width is hidden whole, mark and
+     label, along with every entry after it, so nothing clips mid-label.
+
+  At the shipped fonts the fallback never triggers. From Noto Sans
+  advances the entries total about 530px at Compact, 575 at Standard, and
+  620 at Large, which gives gaps of about 37, 50, and 62px. That is at
+  least 4.5× the 8px mark-to-label space, so each mark still reads as
+  belonging to its own label. Clamp and refused outcomes are stated by
+  the status line when they happen.
 
 ## States
 

@@ -29,6 +29,7 @@ local FONT_META = ns.FONT_META
 local FONT_CHECK = ns.FONT_CHECK
 local round = ns.round
 local fit_text_button = ns.fit_text_button
+local SNAP_DEADBAND_PX = ns.SNAP_DEADBAND_PX
 local make_text = ns.make_text
 local set_texture_color = ns.set_texture_color
 local set_text_color = ns.set_text_color
@@ -237,7 +238,10 @@ local function snap_frame_position()
         local top_px = top * px_per_unit
         local dx_px = round(left_px) - left_px
         local dy_px = round(top_px) - top_px
-        if abs(dx_px) < 0.001 and abs(dy_px) < 0.001 then
+        -- Corrections under the snap deadband are float noise. A size
+        -- change read the window about 0.001px off and moved it there,
+        -- and text then jumped 1px on the next title-bar click.
+        if abs(dx_px) < SNAP_DEADBAND_PX and abs(dy_px) < SNAP_DEADBAND_PX then
             break
         end
         x = x + dx_px / px_per_unit
@@ -289,7 +293,7 @@ local function apply_ui_scale()
     resize_font(FONT_BODY, FONT_REGULAR_PATH, preset.body)
     resize_font(FONT_META, FONT_REGULAR_PATH, preset.meta)
     resize_font(FONT_CHECK, FONT_CHECK_PATH, preset.check)
-    g_frame.layout_key_row()
+    g_frame.layout_key_row(preset.width - 48)
     -- Refit snug text buttons after font sizes settle. The floors are
     -- roughly the button height.
     fit_text_button(g_set_button, 30)

@@ -433,6 +433,7 @@ const valueEditEl = document.getElementById("value-edit");
 const setButtonEl = document.getElementById("set-button");
 const resetButtonEl = document.getElementById("reset-button");
 const statusEl = document.getElementById("status");
+const keyRowEl = document.getElementById("semantic-key");
 const regexChipEl = document.getElementById("regex-chip");
 const filterChipEl = document.getElementById("filter-chip");
 const filterLabelEl = document.getElementById("filter-label");
@@ -1589,6 +1590,7 @@ function applyFonts() {
   );
   fontSelectEl.value = state.font;
   dataSelectEl.value = state.data;
+  layoutKeyRow();
   updateSelection();
 }
 
@@ -1613,6 +1615,42 @@ function applyScale(scale) {
   }
   updateSelection();
   updateScrollbar();
+  layoutKeyRow();
+}
+
+const KEY_MIN_GAP = 16;
+
+// Mirrors layout_key_row (DESIGN.md, Semantic key). Entries spread edge to
+// edge with equal whole-pixel gaps, and leftover pixels go to the leftmost
+// gaps. If a gap would drop below 16px the row becomes a 16px left flow and
+// hides every entry from the first one that would cross the right edge.
+function layoutKeyRow() {
+  const entries = [...keyRowEl.children];
+  for (const entry of entries) {
+    entry.style.display = "";
+    entry.style.width = "";
+    entry.style.marginLeft = "";
+  }
+  const widths = entries.map((entry) => Math.round(entry.getBoundingClientRect().width));
+  const rowWidth = keyRowEl.clientWidth;
+  const slots = entries.length - 1;
+  const free = rowWidth - widths.reduce((sum, width) => sum + width, 0);
+  const spread = free >= slots * KEY_MIN_GAP;
+  const gap = spread ? Math.floor(free / slots) : KEY_MIN_GAP;
+  const extra = spread ? free - gap * slots : 0;
+  let x = 0;
+  entries.forEach((entry, index) => {
+    if (index > 0) {
+      const step = index <= extra ? gap + 1 : gap;
+      entry.style.marginLeft = `${step}px`;
+      x += step;
+    }
+    x += widths[index];
+    entry.style.width = `${widths[index]}px`;
+    if (x > rowWidth) {
+      entry.style.display = "none";
+    }
+  });
 }
 
 function presetLabel(value) {
@@ -2396,6 +2434,9 @@ document.addEventListener("keydown", (event) => {
     redo();
   }
 });
+
+// Web fonts land after the first layout, so measure the key row again.
+document.fonts.addEventListener("loadingdone", layoutKeyRow);
 
 loadState();
 smoothToggleEl.checked = state.smooth;

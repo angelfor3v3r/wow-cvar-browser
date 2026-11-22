@@ -27,10 +27,16 @@
   scaling.
 - Hairline textures registered with `g_hairline` resize to
   `1 / g_frame.px_per_unit`, so borders stay one physical pixel. Boxes, lines,
-  single-anchor text origins, the custom title-bar drag, and list scroll
-  offsets are snapped to the physical pixel grid; anchor offsets are frame
-  units (verified in game). The value field and Set/Reset buttons use custom
-  snapped borders, not backdrop edges.
+  the custom title-bar drag, and list scroll offsets are snapped to the
+  physical pixel grid; anchor offsets are frame units (verified in game).
+  Single-anchor text origins snap a quarter pixel past a whole pixel
+  (`TEXT_SNAP_BIAS_PX`): the client flips text to the next pixel right at a
+  whole-pixel position and boxes at the half pixel (measured in game), so
+  text on exact whole pixels shifts 1px on float noise. Every snapper
+  ignores corrections under `SNAP_DEADBAND_PX` (0.01px), keeps the measured
+  `px_per_unit`, and compares stored offsets with a tolerance because the
+  client returns 32-bit floats. The value field and Set/Reset buttons use
+  custom snapped borders, not backdrop edges.
 - Smooth scrolling (`/cvars smooth`, on by default) steps in whole pixels via
   `g_frame.scroll_frame_to`; both the list and the filter popup use it.
 - Slants are font glyphs: gauge open ends use `/` or `\` centered on the

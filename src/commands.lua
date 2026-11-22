@@ -6,6 +6,7 @@ local _, ns = ...
 
 local SlashCmdList = SlashCmdList
 local SetCVarNative = (C_CVar and C_CVar.SetCVar) or SetCVar
+local GetCVarInfo = (C_CVar and C_CVar.GetCVarInfo) or GetCVarInfo
 local pairs, ipairs = pairs, ipairs
 local type, tostring, tonumber = type, tostring, tonumber
 local pcall = pcall
@@ -53,6 +54,29 @@ do
         else
             g_frame:Show()
         end
+    end
+
+    -- Finds the CVar a command names, opening the window for it. The list is
+    -- only scanned while the window shows, so a hidden window asks the
+    -- client whether the name exists first. A typo then prints its error
+    -- without opening anything. With no name it returns the selection.
+    local function find_target(lower_name, typed_name)
+        if not lower_name then
+            if g_frame.selected then
+                g_frame:Show()
+            end
+            return g_frame.selected
+        end
+        local known = g_frame.by_name[lower_name] ~= nil
+        if not known and not g_frame:IsShown() and GetCVarInfo then
+            local ok, value = pcall(GetCVarInfo, typed_name)
+            known = ok and value ~= nil
+        end
+        if not known then
+            return nil
+        end
+        g_frame:Show()
+        return g_frame.by_name[lower_name]
     end
 
     -- Undo and redo are mirror images. Pop one stack, re-apply its previous
@@ -213,9 +237,9 @@ do
         end
 
         if lower == "copy" or lower:match("^copy%s+") then
-            g_frame:Show()
             local field = lower:match("^copy%s+(%S+)") or "value"
             local target_name = lower:match("^copy%s+%S+%s+(%S+)")
+            local typed_name = message_text:match("^%S+%s+%S+%s+(%S+)")
             local known = {
                 value = true,
                 raw = true,
@@ -226,12 +250,10 @@ do
             }
             if not known[field] then
                 target_name = field
+                typed_name = message_text:match("^%S+%s+(%S+)")
                 field = "value"
             end
-            local entry = g_frame.selected
-            if target_name then
-                entry = g_frame.by_name[target_name]
-            end
+            local entry = find_target(target_name, typed_name)
             if not entry then
                 chat(
                     target_name and ("unknown CVar " .. target_name)
@@ -442,12 +464,11 @@ do
         end
 
         if lower == "fav" or lower:match("^fav%s+") then
-            g_frame:Show()
             local fav_name = lower:match("^fav%s+(%S+)")
-            local entry = g_frame.selected
-            if fav_name then
-                entry = g_frame.by_name[fav_name]
-            end
+            local entry = find_target(
+                fav_name,
+                message_text:match("^%S+%s+(%S+)")
+            )
             if not entry then
                 chat(
                     fav_name and ("unknown CVar " .. fav_name)
@@ -538,13 +559,10 @@ do
                 rebuild_view()
             end
             g_search_box:ClearFocus()
-            local first = g_frame.view[1]
-            if first then
-                select_entry(first)
-                if can_edit(first) then
-                    g_detail_edit:SetFocus()
-                    g_detail_edit:HighlightText()
-                end
+            local best = g_frame.select_best_match()
+            if best and can_edit(best) then
+                g_detail_edit:SetFocus()
+                g_detail_edit:HighlightText()
             end
             return
         end
