@@ -874,7 +874,7 @@ do
             local missing = selected == nil or empty
             row.note:SetText(empty and "none" or "")
             set_enabled(row, not missing)
-            -- commands.lua loads later and sets g_frame.copy_field.
+            -- render.lua loads later and sets g_frame.copy_field.
             row.on_click = function()
                 g_frame.close_menus()
                 if g_frame.selected then
@@ -984,7 +984,7 @@ do
         end
     end)
 
-    -- commands.lua loads later and sets g_frame.step_history.
+    -- render.lua loads later and sets g_frame.step_history.
     g_frame.undo_button:SetScript("OnClick", function()
         g_frame.step_history("undo", true)
     end)

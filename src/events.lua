@@ -482,7 +482,7 @@ g_scroll_frame:SetScript("OnMouseWheel", function(self, delta)
     scroll_to(base - delta * ROW_HEIGHT * 3, true)
 end)
 
-g_scroll_frame:SetScript("OnSizeChanged", function(self, width)
+g_scroll_frame:SetScript("OnSizeChanged", function(_, width)
     g_scroll_child:SetWidth(width)
     update_scrollbar()
 end)
@@ -609,15 +609,33 @@ g_frame:SetScript("OnEvent", function(self, event, argument)
         end
         self:UnregisterEvent("ADDON_LOADED")
     elseif event == "CVAR_UPDATE" then
+        -- A hidden window rescans when it shows, so updates wait until then.
+        if not self:IsShown() then
+            return
+        end
         -- The payload keeps the caller's casing. g_frame.by_name also keys
         -- lowercase.
         local entry = type(argument) == "string"
             and (g_frame.by_name[argument] or g_frame.by_name[argument:lower()])
         if entry then
+            local was_changed = entry.changed
             read_cvar_value(entry)
             apply_range(entry)
-            update_rows()
-            if g_frame.selected == entry and not g_detail_edit:HasFocus() then
+            local editing = g_detail_edit:HasFocus()
+            local selected = g_frame.selected
+            -- An outside write that moves a CVar to or from its default
+            -- refilters and resorts the list. The browser's own writes keep
+            -- the row in place, as does typing in the value field.
+            if entry.changed ~= was_changed and not g_frame.applying
+                and not editing then
+                rebuild_view(true, true)
+            else
+                update_rows()
+            end
+            -- The detail panel keeps its status line and any typed text
+            -- unless its own CVar changed or the selection moved.
+            if not editing
+                and (g_frame.selected == entry or g_frame.selected ~= selected) then
                 update_detail()
             end
         end
@@ -637,7 +655,7 @@ g_frame:SetScript("OnEvent", function(self, event, argument)
         relayout()
     elseif event == "PLAYER_ENTERING_WORLD" then
         if self:IsShown() then
-            rescan()
+            rescan(true)
         end
     end
 end)

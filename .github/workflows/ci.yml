@@ -31,13 +31,24 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Lua 5.1
+      - name: Install Lua 5.1 and luacheck
+        # Lua 5.1.5 is the last 5.1 release, so the apt package cannot drift.
+        # Luacheck is pinned through LuaRocks, since a newer one can add
+        # warnings. The versions are printed so any drift shows in the log.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends lua5.1
+          sudo apt-get install -y --no-install-recommends \
+            lua5.1 liblua5.1-0-dev luarocks
+          sudo luarocks --lua-version 5.1 install luacheck 1.2.0
+          lua5.1 -v
+          luacheck --version
 
       - name: Syntax check
         run: luac5.1 -p src/*.lua tests/harness.lua
+
+      - name: Lint
+        # Settings and the list of client globals live in .luacheckrc.
+        run: luacheck src
 
       - name: TOC lists every source file
         # The harness and the package both follow the TOC, so a file missing

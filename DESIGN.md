@@ -1,10 +1,10 @@
 # CVar Browser — UI design
 
-Visual reference: `mockup/index.html` (live HTML mockup). It is the source of
-truth for the current GUI direction.
+This document is the visual spec of the shipped addon. The Lua in `src/`
+implements it; where the two disagree, treat it as a bug in one of them.
 
 Chosen direction: **Instrument bench**, compact, plum-dark, with muted lilac
-accents. The mockup was reviewed against `skill://frontend-design`; the design
+accents. The design was reviewed against `skill://frontend-design`; the spec
 below incorporates that critique.
 
 ## Goals
@@ -19,19 +19,16 @@ below incorporates that critique.
 ## Constraints
 
 - WoW Forever 1.60.1 (interface 11509, 16001), Lua 5.1.
-- Runtime: no HTML/CSS, flexbox, border-radius, or web fonts.
+- No HTML/CSS, flexbox, border-radius, or web fonts.
 - Textures and FontStrings only; 1px borders are drawn with textures.
-- Runtime fonts: NotoSans-Regular/SemiBold for chrome and data,
-  Inter-SemiBold (`FONT_CHECK`) for the ✓ ↩ ↪ glyphs only. Bundled in
-  `media/`. No bundled font has ★ U+2605, ☆ U+2606, ✦ U+2726, or ♥ U+2665
-  (checked with fontTools), so the favorite mark is drawn from 1px
-  textures, like the funnel and sort icons. Inter's ◆ U+25C6 / ◇ U+25C7
-  were rejected: glyph ink drifts with font metrics (the undo/redo offsets
-  show the cost) and antialiased diagonals would sit beside pixel-drawn
-  icons.
-- IBM Plex, Manrope, Space Grotesk, and JetBrains Mono are mock-preview
-  only, not runtime.
-- No Lua refactor is part of the mockup phase.
+- Fonts: the addon ships exactly three, bundled in `media/` —
+  `NotoSans-Regular.ttf` and `NotoSans-SemiBold.ttf` for chrome and data,
+  and `Inter-SemiBold.ttf` (`FONT_CHECK`) for the ✓ ↩ ↪ glyphs only. No
+  bundled font has ★ U+2605, ☆ U+2606, ✦ U+2726, or ♥ U+2665 (checked
+  with fontTools), so the favorite mark is drawn from 1px textures, like
+  the funnel and sort icons. Inter's ◆ U+25C6 / ◇ U+25C7 were rejected:
+  glyph ink drifts with font metrics (the undo/redo offsets show the cost)
+  and antialiased diagonals would sit beside pixel-drawn icons.
 
 ## Visual language
 
@@ -39,7 +36,7 @@ Flat near-black with a faint plum cast. 1px hairlines, square corners, no
 gloss, no gradients, no drop shadows, no ornate Blizzard chrome. Popups
 (menus, the copy box) are a `surface` fill with a 1px border (`border`;
 `accent` on the always-focused copy box) and no shadow, matching the
-runtime's flat frames. The window renders on a 1:1
+window's flat frames. The window renders on a 1:1
 pixel grid: one UI unit is one physical screen pixel. The frame's effective
 scale is 768 / physical screen height (UI space is 768 units tall), whatever
 the client `uiScale` — it is not 1.0 — so every border and separator is
@@ -64,7 +61,7 @@ whole pixels.
 | `success` | `#63C98A` | Accepted/reset status |
 | `error` | `#E06A72` | Ignored/refused status |
 | `changed` | `#D2BFE6` | Changed CVar name and cursor |
-| `--dot` | `#504C54` | Unknown-range dot (gauge and key); fixed across palettes |
+| `dot` | `#504C54` | Unknown-range dot (gauge and key); fixed across palettes |
 
 The lilac has three quiet steps: `changed` lilac marks values that differ from
 default, `accent` lilac marks selection and focus, and `text` stays the
@@ -75,15 +72,12 @@ the observed teal is muted to instrument levels to stay a supporting voice.
 This lilac rule is a design-language invariant, not Grim-specific: in every
 palette the `changed` highlight and the `accent` are muted lilacs — bright
 purple and fuchsia appear nowhere. Palette identity lives in the surfaces,
-neutrals, and semantic hues instead. The mockup's alternate palettes are
-Void amethyst, Nebula, and Dark orchid, all retuned to the invariant.
+neutrals, and semantic hues instead.
 
 ### Type
 
-NotoSans-Regular/SemiBold carries everything at runtime: chrome, help, CVar
-names, and values. Inter-SemiBold draws the check glyph only. The mockup's
-font pickers (Inter, IBM Plex Sans, Manrope, Space Grotesk, JetBrains Mono)
-are preview affordances, not runtime fonts.
+NotoSans-Regular/SemiBold carries everything: chrome, help, CVar names, and
+values. Inter-SemiBold draws the check glyph only. There is no font picker.
 
 | Role | Font | Compact | Standard | Large | Weight |
 | --- | --- | --- | --- | --- | --- |
@@ -96,16 +90,13 @@ are preview affordances, not runtime fonts.
 
 Sizes are integers fixed per size preset — no fractional sizes and no
 percentage scaling. Rows are 22px; help tracks body size. Standard is the
-documented reference and what the mockup renders (row 22, meta 11, help 13,
-detail name 15, title 20). The mockup's 13/14/15/16 text-size switch is a
-preview stress affordance only, not a runtime control: each step up adds 2px
-to the row and 1px to meta and detail name. Numeric values use tabular
-figures so columns scan cleanly.
+documented reference (row 22, meta 11, help 13, detail name 15, title 20).
+Numeric values use tabular figures so columns scan cleanly.
 
 ### Spacing
 
 4 / 8 / 12 / 16 / 24px. Window 800×600 / 920×680 / 1040×760 — Compact /
-Standard / Large; the mockup renders the Standard reference at 920×680.
+Standard / Large.
 Buttons are snug: 4px label padding on each side with per-control floor
 widths — Set 30, Reset to default 64, Copy 30, Clear all 40, close 24,
 undo/redo 24 — and the floor only applies below the label's natural width.
@@ -127,9 +118,7 @@ from the type table above.
 
 **Auto** resolves from the physical screen height: 1080px or below picks
 Compact, 1800px or above picks Large, everything between picks Standard. The
-choice is saved; the default is Auto. The mockup holds the Standard reference
-geometry (920×680) in every case — picking a preset there updates the Size
-label and menu selection only.
+choice is saved; the default is Auto.
 
 ## Layout
 
@@ -196,10 +185,8 @@ across rows. Domain is the union of help and observed bounds.
   (rows 1–6), cursor and clamp cap 2×8. A w×h mark centers on its value's
   x: left edge `round(x − w/2)`, capped at the last track column (87) so a
   tick at the max lands on the track; top `floor((8 − h)/2)`. Open ends
-  are font glyphs, not textures. The mockup draws the track and marks as
-  SVG rects with the same placement, under `shape-rendering: crispEdges`
-  at 1x; its SVG slashes stand in for the runtime glyphs.
-- **No bounds**: blank track plus one centered 2px `--dot` dot.
+  are font glyphs, not textures.
+- **No bounds**: blank track plus one centered 2px `dot` dot.
 - **Clamp**: 2px amber edge cap beside the cursor; amber status line. Clamp is
   transient, not a stored observed bound.
 - Empty gauge has an accessible label/title.
@@ -327,7 +314,7 @@ across rows. Domain is the union of help and observed bounds.
     panel, header included, and the thumb drags (see Scrolling). Row
     content is `72 + 20 × (19 + categories) + 4` px (four 18px labels, 4
     scope, 1 + categories, 8 type, and 6 Has rows, 4px below the last).
-    The mock's 5 categories make 556px against a 466px viewport at
+    For example, 5 categories make 556px against a 466px viewport at
     Standard: a 90px range and a 390px thumb, with the last four Has rows
     behind the scroll. At Compact the viewport is 430px, the range 126px,
     and the thumb 332px. Rows are fixed heights with nowrap labels, so
@@ -346,16 +333,13 @@ across rows. Domain is the union of help and observed bounds.
     note.
   - **Undo / Redo**: two snug icon buttons (24×26px minimum) carrying the
     undo/redo arrows. Their tooltips name the CVar and the shortcut, disabled
-    buttons included (see Control tooltips). The arrow glyphs sit
-    1px left and 2px below the button's center — the arrow ink sits
-    top-right in its em box — and the mockup's 12×12 SVG marks carry the
-    same offset from the button's center (a font glyph's ink center moves
-    with each font's metrics; the marks are drawn, not glyphs). Disabled
-    uses the existing `.btn` disabled treatment
-    (38% opacity, no hover). Undo is disabled with an empty edit history;
-    Redo is disabled with an empty redo stack. A Set or Reset clears the
-    redo stack. Undo/redo restore the previous/next value of the edited
-    CVar and select its row.
+    buttons included (see Control tooltips). The arrow glyphs sit 1px left
+    and 2px below the button's center — the arrow ink sits top-right in its
+    em box. Disabled uses the shared disabled button treatment (38%
+    opacity, no hover). Undo is disabled with an empty edit history; Redo
+    is disabled with an empty redo stack. A Set or Reset clears the redo
+    stack. Undo/redo restore the previous/next value of the edited CVar and
+    select its row.
   - **Copy**: `Copy` button opening a fixed 170×140 menu `TOPLEFT` on the
     button's `BOTTOMLEFT`, 4px down, with six 22px rows from 4px below its
     top edge — Copy value, Copy raw value, Copy default, Copy name, Copy
@@ -380,9 +364,8 @@ across rows. Domain is the union of help and observed bounds.
     `default`, `name`, `help text`, or `range`.
     Escape, Enter, or losing focus closes it, and closing the menus closes
     it too. Typing changes nothing: the text snaps back and stays
-    highlighted. A field with no text (a blank default) opens no box; the
-    runtime says `nothing to copy for <cvar>` in chat (the mockup uses the
-    status line).
+    highlighted. A field with no text (a blank default) opens no box and
+    says `nothing to copy for <cvar>` in chat.
 - **List header**: 11px muted labels raised 1px — center offset +1 in the
   16px header band — for 3px clearance above the separator, whose 1px line
   runs along the band's bottom to the scrollbar column's right edge — the
@@ -574,18 +557,18 @@ across rows. Domain is the union of help and observed bounds.
   The 8px track column spans exactly between the top list divider and the
   detail separator — flush at both ends — and its right edge is flush with
   both separators' right ends. 4px track centered in the column; the 8px thumb
-  fills the column. Thumb size from track height × clientHeight /
-  scrollHeight; position maps `scrollTop` over the track column. Dragging
-  the thumb moves the list 1:1 with the cursor, on whole pixels and with no
-  easing (mockup: pointer capture); releasing it glides to the nearest
-  whole row, a multiple of 22px clamped into the range, so the top row is
+  fills the column. Thumb size from track height × visible list height /
+  content height; position maps the scroll offset over the track column.
+  Dragging the thumb moves the list 1:1 with the cursor, on whole pixels
+  and with no easing; releasing it glides to the nearest whole row, a
+  multiple of 22px clamped into the range, so the top row is
   never left half-clipped. The thumb is a single solid muted texture at
   alpha 1.0 in every state — fully opaque, so the track never shows through
   (no separate translucent frame); muted, not accent, because accent marks
   selection and focus only. The thumb rect is integer-snapped: x = column
   x, width = 8, right edge flush with the separators' right ends. The list
   header's 1px divider extends to the scrollbar's right edge, closing the
-  gutter gap under the thumb. The mockup's 8px right gutter is intentional.
+  gutter gap under the thumb. The 8px right gutter is intentional.
 - **Detail**: separator, name, meta, help (max 2 lines), value edit
   (340×30), Set, Reset to default, status.
 - **Meta line**: up to 8 parts, muted unless noted, split by 1px `border`
@@ -656,7 +639,7 @@ across rows. Domain is the union of help and observed bounds.
   tally ticks (12×8, two 1×6 `observed` ticks 10px apart on rows 1–6);
   the hollow read-only square (9×9, 1px muted lines); the current-value
   cursor (2×8 in `text`); the slant pair (two font glyphs `/ \` in a 14px
-  group); the 2px `--dot` dot (the same dot as the unknown-range gauge).
+  group); the 2px `dot` dot (the same dot as the unknown-range gauge).
   There is no separate right-aligned hint group. The slant and dot entries
   are ordinary entries in the same list.
 
@@ -844,58 +827,6 @@ offset, list and filter popup, smooth or not, is a whole pixel.
 - **Range change** (a size preset resizing the list): a list scrolled to the
   bottom stays pinned to the bottom; otherwise the offset and any pending
   target are only clamped into the new range.
-
-## Mockup controls
-
-Open `mockup/index.html` through the local HTTP server (not `file:`; Chrome
-blocks local font loading from file URLs). Controls:
-
-- Four palettes: Void amethyst, Grim plum (default), Nebula, Dark orchid.
-- UI font: Inter, IBM Plex Sans, Manrope, Space Grotesk, Noto Sans (default).
-- Data font: Same as UI (default) or JetBrains Mono.
-- Text size: 13 (default) / 14 / 15 / 16. Its row-height change also
-  exercises the Scrolling range-change rule; wheel steps and the drag
-  settle use the current row height.
-- Smooth scroll toggle (default on): the `/cvars smooth` setting. Wheel
-  deltas count as one notch per 100px (or 3 lines).
-- Size menu in the title bar: Auto (default) / Compact / Standard / Large,
-  with the selected preset marked in accent behind the accent left bar. The
-  mockup stays at the 920×680 Standard reference — it does not re-render the
-  Compact or Large layouts.
-- Build: Release 1.0.0 (default) / Dev. It feeds the subtitle rule the TOC
-  metadata a build carries — release is `Version: 1.0.0`, `X-Build: afaa9bd
-  2026-11-18`, rendering `WoW Forever · v1.0.0 · afaa9bd`; dev is
-  `Version: dev` with no X-Build, rendering `WoW Forever · dev`. Reset
-  returns to Release.
-- 8px grid overlay and Reset.
-- **States** scenario bar — one click per acceptance state, each resetting
-  the window to a known base first (favorites back to `farclip` and
-  `nameplateMaxDistance`) and noting the change in the status line (which
-  auto-clears after 30s like every status message):
-  - *Active filters*: `scope:account, type:number, has:changed` set in the
-    filter menu; the Filters chip reads `Filters 3` in accent.
-  - *Active sort*: the sort chip reads `Sort changed desc` in accent.
-  - *Undo & redo disabled*: edit history cleared; both icon buttons dimmed.
-  - *Copy disabled*: an unmatched search empties the list — empty state
-    line, count `0 / N CVars`, Copy disabled, detail cleared.
-  - *Favorites only*: Has `Favorite` ticked; two rows, `Filters 1`.
-  - *Value filter*: search `value:=1` keeps the CVars whose value is
-    exactly `1`.
-  - *Row tooltip*: search `realm`, with the tooltip held open on
-    `realmList` (long wrapped value and help) until the pointer reaches the
-    list.
-  - *Control tooltip*: the Active filters facets, with the Filters chip
-    tooltip held open (`Active filters` over `scope:account, type:number,
-    has:changed`) until the pointer reaches a control or the list.
-  - *Default*: everything at rest.
-- Favorites, the tooltips, and the keyboard keys are live: hover a row or
-  a tooltip control for 0.5s, click a favorite cell, or press the
-  navigation keys or undo/redo shortcuts with the pointer over the window.
-
-The mockup has no external dependencies. It is intentionally interactive:
-Set, Reset, clamp, ignored, read-only, search, regex, filter, sort,
-undo/redo, copy, size, and scrollbar states can be exercised
-without touching the Lua in `src/`.
 
 ## Implementation notes
 

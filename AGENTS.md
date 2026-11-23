@@ -1,17 +1,15 @@
 # CVar Browser agent rules
 
-## Mockup ownership
+## Design ownership
 
-- **Designer owns the mock.** Every GUI mockup/design change for this addon is
-  owned by the `designer` agent: `mockup/**`, `DESIGN.md`, palettes, type,
-  layout, gauges, semantic keys, and visual states.
-- The main assistant MUST delegate design decisions and file edits to the
-  `designer` agent. It may only start the local server, take screenshots, run
-  `node --check`, check browser console/behavior, and report.
-- The main assistant MUST NOT make visual/design edits itself. If the designer
-  is unavailable, stop and ask.
-- No Lua/addon implementation or refactor during mockup work unless explicitly
-  requested.
+- **Designer owns the look.** `DESIGN.md` is the visual specification, and
+  the `designer` agent owns it along with every visual decision: palettes,
+  type, layout, gauges, semantic keys, and visual states.
+- The main assistant MUST delegate design decisions and `DESIGN.md` edits to
+  the `designer` agent, then implements the decided design in `src/`. If the
+  designer is unavailable, stop and ask.
+- There is no HTML mock. The Lua in `src/` is the only implementation, and
+  visuals are checked in game.
 
 ## Runtime implementation
 
@@ -96,10 +94,18 @@
   `uiScale` → `"1"`, `"1.000000"`, …); read the current value from
   `C_CVar.GetCVar`.
   Writability is only known from the `C_CVar.SetCVar` result.
-- Keep `luac -p src/*.lua` clean and `lua tests/harness.lua` passing;
-  CI runs both on every push to `main` and every pull request. Add a harness
-  check for new behavior, and confirm it fails when the behavior is broken.
-  Visual verification still requires an in-game `/reload` and `/cvars`.
+- Keep `luac -p src/*.lua` and `luacheck src` clean and
+  `lua tests/harness.lua` passing; CI runs all three on every push to `main`
+  and every pull request. A new client global goes in `.luacheckrc`. Add a
+  harness check for new behavior, and confirm it fails when the behavior is
+  broken. Visual verification still requires an in-game `/reload` and
+  `/cvars`.
+- Slash commands are handlers in two tables in `commands.lua`: `exact`
+  (the whole line) and `worded` (keyed by the first word, returning false
+  to fall through to the search). `CVAR_UPDATE` is ignored while the window
+  is hidden, because showing it rescans. `apply_range` drops an observed
+  bound once the value has passed it. `CVarBrowserDB.version` gates saved
+  variable migrations in `init_db`.
 
 ## Comments and prose
 

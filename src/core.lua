@@ -51,6 +51,9 @@ g_frame.filters = {
 }
 g_frame.undo_stack = {}
 g_frame.redo_stack = {}
+-- True while the browser itself calls SetCVar, so the CVAR_UPDATE handler
+-- can tell its own writes from outside ones.
+g_frame.applying = false
 -- Regions that apply_ui_scale snaps to the pixel grid. Each file appends
 -- the widgets it builds. Lines keep every anchor, boxes move their first.
 g_frame.snap_lines = {}
@@ -211,10 +214,35 @@ local function default_text(entry)
     return text
 end
 
+-- Whether two CVar values are the same text or the same number. The client
+-- can report one number in two forms ("1" against "1.000000" for uiScale).
+local function values_equal(a, b)
+    if a == b then
+        return true
+    end
+    local number = tonumber(a)
+    return number ~= nil and number == tonumber(b)
+end
+
+local function chat(text)
+    DEFAULT_CHAT_FRAME:AddMessage("|cffB7A3CCCVarBrowser|r " .. text)
+end
+
+-- Shortens text to maximum bytes, ending in "...". The cut backs up to a
+-- character boundary so it never splits a UTF-8 sequence.
 local function ellipsize(text, maximum)
     text = tostring(text or ""):gsub("[\r\n]+", " ")
     if #text > maximum then
-        return text:sub(1, maximum - 3) .. "..."
+        local cut = maximum - 3
+        -- Bytes 128 to 191 continue a multi-byte character.
+        while cut > 0 do
+            local next_byte = text:byte(cut + 1)
+            if next_byte < 128 or next_byte > 191 then
+                break
+            end
+            cut = cut - 1
+        end
+        return text:sub(1, cut) .. "..."
     end
     return text
 end
@@ -617,16 +645,16 @@ local function parse_range_content(content)
         :gsub("–", "-")
         :gsub("—", "-")
 
-    local minimum_text = content:match("^min[%s:=]*(" .. RANGE_NUMBER .. ")$")
-    if minimum_text then
-        local minimum, text = parse_range_number(minimum_text)
+    local only_minimum = content:match("^min[%s:=]*(" .. RANGE_NUMBER .. ")$")
+    if only_minimum then
+        local minimum, text = parse_range_number(only_minimum)
         if minimum then
             return "min " .. text, minimum, nil
         end
     end
-    local maximum_text = content:match("^max[%s:=]*(" .. RANGE_NUMBER .. ")$")
-    if maximum_text then
-        local maximum, text = parse_range_number(maximum_text)
+    local only_maximum = content:match("^max[%s:=]*(" .. RANGE_NUMBER .. ")$")
+    if only_maximum then
+        local maximum, text = parse_range_number(only_maximum)
         if maximum then
             return "max " .. text, nil, maximum
         end
@@ -792,9 +820,41 @@ local function format_observed_evidence(observed)
     return #parts > 0 and concat(parts, ", ") or nil
 end
 
+-- Drops an observed bound the current value has passed, since a value above
+-- the recorded maximum (or below the minimum) proves that bound wrong.
+-- Returns the observed table, or nil once neither bound is left.
+local function drop_passed_bounds(entry, observed)
+    local value = tonumber(entry.value)
+    if not value then
+        return observed
+    end
+    local observed_max = tonumber(observed.max)
+    if observed_max and value > observed_max then
+        observed.max = nil
+        observed.max_requested = nil
+        observed.max_previous = nil
+        observed.max_seen = nil
+    end
+    local observed_min = tonumber(observed.min)
+    if observed_min and value < observed_min then
+        observed.min = nil
+        observed.min_requested = nil
+        observed.min_previous = nil
+        observed.min_seen = nil
+    end
+    if observed.max == nil and observed.min == nil then
+        g_frame.db.observed[entry.name] = nil
+        return nil
+    end
+    return observed
+end
+
 local function apply_range(entry)
     local db = g_frame.db
     local observed = db and db.observed and db.observed[entry.name]
+    if type(observed) == "table" then
+        observed = drop_passed_bounds(entry, observed)
+    end
     entry.observed = observed
     local observed_text = format_observed_range(observed)
     if observed_text then
@@ -819,9 +879,19 @@ local function infer_value_type(entry)
         return "Unknown"
     end
     value = tostring(value)
-    if value == "0" or value == "1"
-        or value == "true" or value == "false" then
+    if value == "true" or value == "false" then
         return "Boolean"
+    end
+    -- A 0 or 1 is a Boolean unless the help gives a range or the default is
+    -- some other number, which marks a Number that happens to sit at 0 or 1.
+    if value == "0" or value == "1" then
+        local default = entry.default_value
+        local flag_default = default == nil or default == "0" or default == "1"
+            or default == "true" or default == "false"
+        if flag_default and not entry.help_range then
+            return "Boolean"
+        end
+        return "Number"
     end
     if tonumber(value) then
         return "Number"
@@ -886,9 +956,7 @@ local function read_cvar_value(entry)
     -- default in different forms ("1" against "1.000000" for uiScale).
     entry.changed = value ~= nil
         and default_value ~= nil
-        and value ~= default_value
-        and not (tonumber(value) ~= nil
-            and tonumber(value) == tonumber(default_value))
+        and not values_equal(value, default_value)
     entry.bitfield = BITFIELD_CVARS[entry.name] == true
     entry.serialized = false
     if not entry.bitfield and value ~= nil then
@@ -1080,30 +1148,35 @@ local function init_db()
         db.log = {}
     end
 
-    local observed_key_map = {
-        maxRequested = "max_requested",
-        maxPrevious = "max_previous",
-        maxSeen = "max_seen",
-        minRequested = "min_requested",
-        minPrevious = "min_previous",
-        minSeen = "min_seen",
-    }
-    for _, observed in pairs(db.observed) do
-        if type(observed) == "table" then
-            for old_key, new_key in pairs(observed_key_map) do
-                if observed[old_key] ~= nil and observed[new_key] == nil then
-                    observed[new_key] = observed[old_key]
-                    observed[old_key] = nil
+    -- Saved variables from before version 1 used camelCase observed keys and
+    -- stored bounds as text.
+    if db.version == nil then
+        local observed_key_map = {
+            maxRequested = "max_requested",
+            maxPrevious = "max_previous",
+            maxSeen = "max_seen",
+            minRequested = "min_requested",
+            minPrevious = "min_previous",
+            minSeen = "min_seen",
+        }
+        for _, observed in pairs(db.observed) do
+            if type(observed) == "table" then
+                for old_key, new_key in pairs(observed_key_map) do
+                    if observed[old_key] ~= nil and observed[new_key] == nil then
+                        observed[new_key] = observed[old_key]
+                        observed[old_key] = nil
+                    end
                 end
-            end
-            if type(observed.max) == "string" then
-                observed.max = tonumber(observed.max) or observed.max
-            end
-            if type(observed.min) == "string" then
-                observed.min = tonumber(observed.min) or observed.min
+                if type(observed.max) == "string" then
+                    observed.max = tonumber(observed.max) or observed.max
+                end
+                if type(observed.min) == "string" then
+                    observed.min = tonumber(observed.min) or observed.min
+                end
             end
         end
     end
+    db.version = 1
 end
 
 -- Appends one accepted change to the saved change log. Values are stored as
@@ -1148,6 +1221,8 @@ ns.FONT_BODY = FONT_BODY
 ns.FONT_META = FONT_META
 ns.FONT_CHECK = FONT_CHECK
 ns.trim = trim
+ns.values_equal = values_equal
+ns.chat = chat
 ns.clamp = clamp
 ns.round = round
 ns.hex_to_bitfield = hex_to_bitfield

@@ -47,6 +47,8 @@ local set_texture_color = ns.set_texture_color
 local set_text_color = ns.set_text_color
 local build_meta_parts = ns.build_meta_parts
 local log_change = ns.log_change
+local values_equal = ns.values_equal
+local chat = ns.chat
 local g_search_box = ns.g_search_box
 local g_changed_button = ns.g_changed_button
 local g_count_text = ns.g_count_text
@@ -506,8 +508,10 @@ local function select_entry(entry)
 end
 
 -- Pass keep_scroll to stay at the current offset (a favorite toggle).
--- Otherwise the list jumps back to the top for the new results.
-local function rebuild_view(keep_scroll)
+-- Otherwise the list jumps back to the top for the new results. Pass
+-- keep_detail to leave the detail panel alone, for a caller that redraws
+-- it only when needed.
+local function rebuild_view(keep_scroll, keep_detail)
     g_frame.hide_tooltip()
     local query = trim(g_search_box:GetText() or "")
     local use_pattern = g_frame.regex_enabled == true
@@ -565,7 +569,8 @@ local function rebuild_view(keep_scroll)
         elseif facet == "fav" or facet == "favorite" then
             return entry.favorite
         end
-        return true
+        -- An unknown facet such as a typo matches nothing.
+        return false
     end
 
     local function matches_text(entry)
@@ -765,7 +770,9 @@ local function rebuild_view(keep_scroll)
         g_scroll_frame:SetVerticalScroll(0)
     end
     update_rows()
-    update_detail()
+    if keep_detail ~= true then
+        update_detail()
+    end
 end
 
 g_frame.rebuild_results = rebuild_view
@@ -785,7 +792,8 @@ g_frame.toggle_favorite = function(entry)
     )
 end
 
-local function rescan()
+-- Pass keep_scroll to stay at the current offset (a loading screen).
+local function rescan(keep_scroll)
     local selected_name = g_frame.selected and g_frame.selected.name
     g_frame.by_name = {}
     for index = #g_entries, 1, -1 do
@@ -841,7 +849,7 @@ local function rescan()
     if g_frame.filter_popup:IsShown() then
         g_frame.refresh_filter_menu()
     end
-    rebuild_view()
+    rebuild_view(keep_scroll)
     set_status(format("Loaded %d CVars.", #g_entries))
 end
 
@@ -878,7 +886,9 @@ local function apply_value(action)
         end
         requested = decoded
     end
+    g_frame.applying = true
     local ok, result = pcall(SetCVarNative, entry.name, requested)
+    g_frame.applying = false
     if not ok then
         set_status("SetCVar error: " .. tostring(result), "error")
         return
@@ -910,9 +920,8 @@ local function apply_value(action)
         )
     end
     local learned = record_observed_bound(entry, requested, previous)
-    if learned then
-        apply_range(entry)
-    end
+    -- Also drops an observed bound that this value has passed.
+    apply_range(entry)
     if learned and actual ~= nil then
         local requested_number = tonumber(requested)
         local actual_number = tonumber(actual)
@@ -1009,6 +1018,141 @@ local function toggle_changed()
     rebuild_view()
 end
 
+-- Undo and redo are mirror images. Pop one stack, re-apply its previous
+-- value, and push the value it replaced onto the other stack. A step
+-- from the window reports on the status line only, and a slash command
+-- also prints to chat.
+local function step_history(verb, from_window)
+    local function report(chat_text, status_text, tone)
+        if status_text then
+            set_status(status_text, tone)
+        end
+        if not from_window then
+            chat(chat_text)
+        end
+    end
+
+    local is_undo = verb == "undo"
+    local title = is_undo and "Undo" or "Redo"
+    local from = is_undo and g_frame.undo_stack or g_frame.redo_stack
+    local last = from[#from]
+    if not last then
+        report("nothing to " .. verb, nil, nil)
+        return
+    end
+    -- The Undo and Redo tooltips name the CVar on top of the stack, so
+    -- any step hides the tooltip rather than leave it stale.
+    g_frame.hide_tooltip()
+    g_frame:Show()
+    local entry = g_frame.by_name[last.name]
+    if not entry then
+        report(
+            "CVar " .. last.name .. " no longer exists",
+            title .. " failed because " .. last.name .. " no longer exists",
+            "error"
+        )
+        return
+    end
+    if not can_edit(entry) then
+        report(
+            "cannot " .. verb .. " " .. last.name .. " in its current state",
+            title .. " of " .. last.name .. " is blocked in its current state",
+            "error"
+        )
+        return
+    end
+    local current = entry.value
+    from[#from] = nil
+    g_frame.applying = true
+    local ok, result = pcall(SetCVarNative, last.name, last.previous)
+    g_frame.applying = false
+    if not ok or result == false then
+        from[#from + 1] = last
+        report(
+            verb .. " refused for " .. last.name,
+            title .. " of " .. last.name .. " was refused",
+            "error"
+        )
+        return
+    end
+    read_cvar_value(entry)
+    -- The client may hand the value back in another number form.
+    if not values_equal(entry.value, last.previous) then
+        from[#from + 1] = last
+        report(
+            verb .. " did not stick for " .. last.name,
+            title .. " of " .. last.name .. " did not stick",
+            "error"
+        )
+        return
+    end
+    local to = is_undo and g_frame.redo_stack or g_frame.undo_stack
+    to[#to + 1] = {
+        name = last.name,
+        previous = current,
+    }
+    if not is_undo and #to > UNDO_LIMIT then
+        remove(to, 1)
+    end
+    log_change(entry, verb, current, entry.value)
+    apply_range(entry)
+    -- The clamp tick marks the last clamped set, which this step replaced.
+    entry.clamp_at = nil
+    entry.clamp_side = nil
+    select_entry(entry)
+    local value_text = display_edit_value(entry, entry.value)
+    -- Chat lines are lowercase fragments, the status line a sentence.
+    report(
+        format("%s %s to %s", is_undo and "undid" or "redid",
+            last.name, value_text),
+        format("%s %s to %s", is_undo and "Undid" or "Redid",
+            last.name, value_text),
+        nil
+    )
+end
+
+-- The Undo and Redo buttons in toolbar.lua call this.
+g_frame.step_history = step_history
+
+-- Opens the copy box with one field of a CVar. The slash command and
+-- the Copy menu rows both use it.
+local function copy_field(entry, field)
+    local value = nil
+    if field == "name" then
+        value = entry.name
+    elseif field == "default" then
+        value = entry.default_value
+    elseif field == "help" then
+        value = entry.help
+    elseif field == "range" then
+        value = entry.range_text
+    elseif field == "raw" then
+        value = entry.value
+    else
+        value = display_edit_value(entry, entry.value)
+    end
+    if value == nil or value == "" then
+        chat("nothing to copy for " .. entry.name)
+        return
+    end
+    g_frame.close_menus()
+    g_frame.show_copy_box(tostring(value))
+    -- The field as the Copy menu names it, so the status reads as a
+    -- sentence.
+    local field_names = {
+        raw = "raw value",
+        help = "help text",
+    }
+    set_status(format(
+        "Press Ctrl+C to copy the %s of %s",
+        field_names[field] or field,
+        entry.name
+    ))
+end
+
+-- The Copy menu rows in toolbar.lua call this.
+g_frame.copy_field = copy_field
+
 -- Shared with the files loaded after this one.
 ns.set_status = set_status
 ns.update_controls = update_controls
@@ -1022,3 +1166,5 @@ ns.rescan = rescan
 ns.apply_value = apply_value
 ns.reset_value = reset_value
 ns.toggle_changed = toggle_changed
+ns.step_history = step_history
+ns.copy_field = copy_field

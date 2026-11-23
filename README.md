@@ -80,13 +80,13 @@ The client has no public table of CVar minimum and maximum values. The addon rea
 
 ## Development
 
-`mockup/index.html` is the standalone visual mock. Serve the repository folder over HTTP and open `/mockup/`, because the mock loads fonts from `media/` and won't work from a `file:` URL. `DESIGN.md` holds the visual specification.
+`DESIGN.md` holds the visual specification.
 
 `lua tests/harness.lua` (Lua 5.1, run from the repository folder) loads every Lua file the TOC lists, in order, against headless WoW API stubs. It checks loading, scanning, set/clamp/reset, undo/redo and their shortcuts, the change log, read-only, locked, and in-combat secure selection, slash commands, copy, pattern and value search, favorites, row and control tooltips, keyboard navigation, smooth scrolling and scrollbar drags, the pixel-locked drag, and register headroom in each file, and it exits non-zero on failure. Pixel-level visuals still need an in-game `/reload`.
 
 The addon's Lua lives in `src/`, one file per part of the window, and the TOC loads the files in dependency order. Files share code through the addon namespace. A new file has to be added to the TOC too, and CI checks that the two match.
 
-CI (`.github/workflows/ci.yml`) runs `luac -p` and the harness on every push to `main` and on every pull request. To cut a release, push a tag:
+CI (`.github/workflows/ci.yml`) runs `luac -p`, `luacheck src`, and the harness on every push to `main` and on every pull request. To cut a release, push a tag:
 
 ```sh
 git tag v1.0.0

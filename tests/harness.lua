@@ -63,6 +63,8 @@ end
 local g_widgets = {}
 local g_chat = {}
 local g_set_calls = {}
+-- While true the SetCVar stub fires CVAR_UPDATE before it returns.
+local g_fire_updates = false
 local g_last_focus = nil
 local g_methods = {}
 local g_widget_mt = {
@@ -337,7 +339,14 @@ _G.C_CVar = {
         if cvar.max and number and number > cvar.max then
             value = tostring(cvar.max)
         end
+        if cvar.format and number then
+            value = cvar.format:format(number)
+        end
         cvar.value = tostring(value)
+        if g_fire_updates then
+            local frame = _G.CVarBrowserFrame
+            frame._scripts.OnEvent(frame, "CVAR_UPDATE", name)
+        end
         return true
     end,
 }
@@ -415,6 +424,17 @@ end
 fire("ADDON_LOADED", "CVarBrowser")
 check(type(CVarBrowserDB) == "table", "ADDON_LOADED creates saved variables")
 check(CVarBrowserDB.smooth_scroll == true, "smooth scrolling defaults on")
+
+do
+    CVarBrowserDB.version = nil
+    CVarBrowserDB.observed.legacyThing = { maxSeen = 2, max = "3" }
+    fire("ADDON_LOADED", "CVarBrowser")
+    local legacy = CVarBrowserDB.observed.legacyThing
+    check(legacy.max_seen == 2 and legacy.max == 3 and CVarBrowserDB.version == 1,
+        "saved variables from before version 1 migrate once loaded")
+    CVarBrowserDB.observed.legacyThing = nil
+end
+
 fire("PLAYER_ENTERING_WORLD")
 
 -- Scan -----------------------------------------------------------------------
@@ -1724,6 +1744,121 @@ do
     g_mouse_down = true
     check(g_frame._scripts.OnUpdate == nil and CVarBrowserDB.point == "TOPLEFT",
         "releasing the button anywhere stops the drag and saves the anchor")
+end
+
+-- Outside updates, passed bounds, and number forms --------------------------
+
+do
+    local list_scroll = find_widget(function(w)
+        return w._kind == "ScrollFrame" and w._parent == g_frame
+    end)
+    local function blur()
+        if g_last_focus then
+            g_last_focus:ClearFocus()
+        end
+    end
+    local function shown_count()
+        return tonumber(g_count_text._text:match("^(%d+) /"))
+    end
+
+    slash("graphicsQuality")
+    g_frame:Hide()
+    g_by_name.graphicsQuality.value = "42"
+    fire("CVAR_UPDATE", "graphicsQuality")
+    check(g_frame.by_name.graphicsQuality.value ~= "42",
+        "a hidden window ignores CVAR_UPDATE")
+    g_last_focus = nil
+    slash("graphicsQuality")
+    local detail_edit = g_last_focus
+    check(g_frame.by_name.graphicsQuality.value == "42",
+        "showing the window picks up updates it skipped")
+
+    CVarBrowserDB.observed.graphicsQuality = { min = 1, max = 3, max_seen = 2 }
+    fire("CVAR_UPDATE", "graphicsQuality")
+    local observed = CVarBrowserDB.observed.graphicsQuality
+    check(observed ~= nil and observed.max == nil and observed.max_seen == nil
+        and observed.min == 1,
+        "a value above the observed maximum drops that bound only")
+    CVarBrowserDB.observed.graphicsQuality = { max = 45 }
+    detail_edit:SetText("50")
+    fire_script(detail_edit, "OnEnterPressed")
+    check(CVarBrowserDB.observed.graphicsQuality == nil
+        and g_frame.by_name.graphicsQuality.observed == nil,
+        "an accepted set past the last observed bound forgets the range")
+
+    -- The client hands 42 back as 42.000000.
+    g_by_name.graphicsQuality.format = "%.6f"
+    g_chat = {}
+    slash("undo")
+    g_by_name.graphicsQuality.format = nil
+    check(chat_has("undid graphicsQuality"),
+        "undo accepts the value back in another number form")
+    blur()
+
+    slash("changed")
+    blur()
+    local before = shown_count()
+    check(g_frame.by_name.extra3.changed, "extra3 starts changed")
+    g_by_name.extra3.value = "0"
+    fire("CVAR_UPDATE", "extra3")
+    check(shown_count() == before - 1,
+        "an outside write back to the default leaves the Changed filter")
+
+    slash("changed extra4")
+    blur()
+    before = shown_count()
+    g_fire_updates = true
+    fire_script(g_reset_button, "OnClick")
+    g_fire_updates = false
+    check(g_by_name.extra4.value == "0" and shown_count() == before,
+        "the browser's own reset keeps the row under the Changed filter")
+
+    slash("extra9")
+    blur()
+    fire_script(g_reset_button, "OnClick")
+    g_by_name.extra6.value = "0"
+    fire("CVAR_UPDATE", "extra6")
+    check(find_widget(function(w)
+        return w._kind == "FontString" and w._text == "Set extra9 = 0"
+    end) ~= nil, "an outside write to another CVar keeps the status line")
+
+    slash("has:rnage")
+    check(shown_count() == 0, "an unknown has: facet matches nothing")
+
+    slash("extra")
+    blur()
+    g_by_name.extra5.value = "1"
+    fire("CVAR_UPDATE", "extra5")
+    check(g_frame.by_name.extra5.type_key == "number",
+        "a 1 with a help range is a Number")
+    check(g_frame.by_name.autoLootDefault.type_key == "boolean",
+        "a 1 with a 0 default and no range is a Boolean")
+
+    list_scroll:SetVerticalScroll(66)
+    fire("PLAYER_ENTERING_WORLD")
+    check(list_scroll._scroll == 66, "a loading screen keeps the list offset")
+
+    -- A value with these bytes shows as hex, so the default carries them.
+    local long_name = "aVeryLongConsoleVariableNameThatWasCutOffEarly"
+    local long_default = g_by_name[long_name].default
+    slash(long_name)
+    blur()
+    g_by_name[long_name].value = "abc"
+    g_by_name[long_name].default = ("a"):rep(10) .. ("\195\169"):rep(5)
+    fire("CVAR_UPDATE", long_name)
+    check(find_widget(function(w)
+        return w._kind == "FontString"
+            and w._text:find("(Default: " .. ("a"):rep(10) .. "...)", 1, true)
+    end) ~= nil, "a shortened default never splits a UTF-8 character")
+    g_by_name[long_name].value = long_default
+    g_by_name[long_name].default = long_default
+    fire("CVAR_UPDATE", long_name)
+
+    g_chat = {}
+    slash("help me")
+    check(not chat_has("commands:"), "extra words after help make it a search")
+    slash("extra")
+    blur()
 end
 
 -- Every remaining script handler runs without raising ------------------------
