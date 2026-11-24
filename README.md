@@ -36,13 +36,14 @@ Search, inspect, edit, and reset every console variable the WoW Forever client e
 | `/cvars ranges [name]` | List learned clamp bounds, for all CVars or one |
 | `/cvars fav [name]` | Pin or unpin a CVar, or the selected one |
 | `/cvars log [count\|name]` | List logged changes, the last 10 by default, or every change to one CVar |
-| `/cvars clearlog` | Clear the change log |
+| `/cvars clearlog` | Clear the change log (send it twice to confirm) |
 | `/cvars sort name\|type\|scope\|category\|changed\|range [asc\|desc]` | Sort the rows |
 | `/cvars copy [value\|raw\|default\|name\|help\|range] [cvar]` | Show the text selected in a copy box so you can press Ctrl+C (addons can't write to the clipboard) |
 | `/cvars minimap` | Hide or show the minimap button |
 | `/cvars minimap reset` | Reset the minimap button's angle |
-| `/cvars clearranges` | Clear all learned bounds |
+| `/cvars clearranges` | Clear all learned bounds (send it twice to confirm) |
 | `/cvars clearrange <name>` | Clear one learned bound |
+| `/cvars reset` | Put every addon setting back to its default (window place and size, smooth scrolling, minimap button, search, sort, filters). Favorites, the log, and learned bounds are kept, and no CVar is changed |
 | `/cvars regex` | Toggle Lua-pattern search |
 | `/cvars smooth [on\|off]` | Toggle smooth list scrolling (on by default) |
 | `/cvars filters` | Show the search filter syntax |

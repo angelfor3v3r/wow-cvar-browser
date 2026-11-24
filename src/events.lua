@@ -667,3 +667,6 @@ g_frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 g_frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 g_frame:RegisterEvent("UI_SCALE_CHANGED")
 g_frame:RegisterEvent("DISPLAY_SIZE_CHANGED")
+
+-- Shared with the files loaded after this one.
+ns.relayout = relayout

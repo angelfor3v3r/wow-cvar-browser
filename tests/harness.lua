@@ -266,8 +266,10 @@ _G.C_Timer = {
     end,
 }
 _G.Enum = { ConsoleCommandType = { Cvar = 0, Command = 1 } }
--- A fixed clock keeps change log times deterministic.
-_G.time = function() return 1763467200 end
+-- A clock that only moves when a test moves it keeps change log times
+-- deterministic.
+local g_now = 1763467200
+_G.time = function() return g_now end
 _G.date = os.date
 -- TOC metadata. The main load runs as a CI release build, and a second
 -- load at the end runs as a repository (dev) build.
@@ -1024,8 +1026,49 @@ do
 
     g_chat = {}
     slash("clearlog")
+    check(#CVarBrowserDB.log == 200 and chat_has("send /cvars clearlog again"),
+        "/cvars clearlog asks for a repeat before it clears")
+    g_now = g_now + 11
+    slash("clearlog")
+    check(#CVarBrowserDB.log == 200, "a late repeat of clearlog asks again")
+    -- With a range saved, clearranges asks too and becomes the pending one.
+    CVarBrowserDB.observed.extra1 = { max = 5 }
+    slash("clearranges")
+    slash("clearlog")
+    check(#CVarBrowserDB.log == 200 and CVarBrowserDB.observed.extra1 ~= nil,
+        "another clear command does not confirm clearlog")
+    CVarBrowserDB.observed.extra1 = nil
+    slash("clearlog")
     check(#CVarBrowserDB.log == 0 and chat_has("cleared 200 logged changes"),
-        "/cvars clearlog empties the log")
+        "/cvars clearlog empties the log when repeated in time")
+end
+
+-- Settings reset --------------------------------------------------------------
+
+do
+    slash("sort changed")
+    slash("regex on")
+    slash("smooth off")
+    CVarBrowserDB.preset = "large"
+    CVarBrowserDB.minimap_hidden = true
+    CVarBrowserDB.minimap_angle = 10
+    CVarBrowserDB.favorites.extra2 = true
+    g_frame.filters.scope = "account"
+    g_frame.filters.has.range = true
+    slash("reset")
+    check(CVarBrowserDB.smooth_scroll == true and CVarBrowserDB.preset == "auto"
+        and CVarBrowserDB.minimap_hidden == false
+        and CVarBrowserDB.minimap_angle == 220 and CVarBrowserDB.point == "CENTER",
+        "/cvars reset restores the saved settings")
+    check(g_frame.sort_key == "name" and g_frame.sort_dir == "asc"
+        and g_frame.regex_enabled == false and g_frame.filters.scope == ""
+        and next(g_frame.filters.has) == nil,
+        "/cvars reset restores sort, filters, and pattern search")
+    check(g_count_text._text:match("^47 / 47") ~= nil,
+        "/cvars reset shows the whole list again: " .. g_count_text._text)
+    check(CVarBrowserDB.favorites.extra2 == true, "/cvars reset keeps favorites")
+    CVarBrowserDB.favorites.extra2 = nil
+    slash("extra")
 end
 
 -- value: filter --------------------------------------------------------------
@@ -1838,7 +1881,15 @@ do
     fire("PLAYER_ENTERING_WORLD")
     check(list_scroll._scroll == 66, "a loading screen keeps the list offset")
 
-    -- A value with these bytes shows as hex, so the default carries them.
+    g_by_name.extra5.value = "caf\195\169"
+    fire("CVAR_UPDATE", "extra5")
+    check(not g_frame.by_name.extra5.serialized, "accented text stays text")
+    g_by_name.extra5.value = "caf\195"
+    fire("CVAR_UPDATE", "extra5")
+    check(g_frame.by_name.extra5.serialized, "bytes that are not UTF-8 show as hex")
+    g_by_name.extra5.value = "1"
+    fire("CVAR_UPDATE", "extra5")
+
     local long_name = "aVeryLongConsoleVariableNameThatWasCutOffEarly"
     local long_default = g_by_name[long_name].default
     slash(long_name)

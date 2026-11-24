@@ -105,7 +105,10 @@
   to fall through to the search). `CVAR_UPDATE` is ignored while the window
   is hidden, because showing it rescans. `apply_range` drops an observed
   bound once the value has passed it. `CVarBrowserDB.version` gates saved
-  variable migrations in `init_db`.
+  variable migrations in `init_db`. `clearlog` and `clearranges` wipe saved
+  data, so they go through `confirmed` and need sending twice. A value is
+  `serialized` (shown as hex) only when it has control bytes or is not
+  valid UTF-8.
 
 ## Comments and prose
 

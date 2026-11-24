@@ -15,6 +15,7 @@ local cos, sin, atan2 = math.cos, math.sin, math.atan2
 -- Shared from earlier files --------------------------------------------------
 
 local g_frame = ns.g_frame
+local DB_DEFAULTS = ns.DB_DEFAULTS
 
 -- Minimap button -------------------------------------------------------------
 
@@ -55,7 +56,9 @@ if Minimap then
     g_frame.minimap_button.icon:SetPoint("CENTER")
 
     g_frame.minimap_button.update_position = function(self)
-        local angle = rad(g_frame.db and g_frame.db.minimap_angle or 220)
+        local angle = rad(
+            g_frame.db and g_frame.db.minimap_angle or DB_DEFAULTS.minimap_angle
+        )
         local radius = 80
         self:ClearAllPoints()
         self:SetPoint(

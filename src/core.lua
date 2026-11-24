@@ -247,6 +247,33 @@ local function ellipsize(text, maximum)
     return text
 end
 
+-- Whether text is well-formed UTF-8, checked one character at a time.
+local function is_utf8(text)
+    local index = 1
+    local length = #text
+    while index <= length do
+        local lead = text:byte(index)
+        local extra = 0
+        if lead >= 194 and lead <= 223 then
+            extra = 1
+        elseif lead >= 224 and lead <= 239 then
+            extra = 2
+        elseif lead >= 240 and lead <= 244 then
+            extra = 3
+        elseif lead >= 128 then
+            return false
+        end
+        for offset = 1, extra do
+            local continuation = text:byte(index + offset)
+            if not continuation or continuation < 128 or continuation > 191 then
+                return false
+            end
+        end
+        index = index + extra + 1
+    end
+    return true
+end
+
 local function make_text(parent, font, text, color)
     local text_object = parent:CreateFontString(nil, "ARTWORK")
     text_object:SetFontObject(font)
@@ -958,10 +985,13 @@ local function read_cvar_value(entry)
         and default_value ~= nil
         and not values_equal(value, default_value)
     entry.bitfield = BITFIELD_CVARS[entry.name] == true
+    -- Control bytes or bytes that are not UTF-8 text mark binary data, which
+    -- the value field shows as hex. Accented text stays text.
     entry.serialized = false
     if not entry.bitfield and value ~= nil then
         local text = tostring(value)
-        if text:find("[%z\1-\31\127-\255]") then
+        if text:find("[%z\1-\31\127]")
+            or (text:find("[\128-\255]") and not is_utf8(text)) then
             entry.serialized = true
         end
     end

@@ -5,6 +5,7 @@ local _, ns = ...
 -- Localized WoW APIs ---------------------------------------------------------
 
 local SlashCmdList = SlashCmdList
+local UIParent = UIParent
 local GetCVarInfo = (C_CVar and C_CVar.GetCVarInfo) or GetCVarInfo
 local pairs, ipairs = pairs, ipairs
 local type, tostring, tonumber = type, tostring, tonumber
@@ -12,7 +13,7 @@ local pcall = pcall
 local floor, max = math.floor, math.max
 local format = string.format
 local sort = table.sort
-local date = date
+local date, time = date, time
 
 -- Shared from earlier files --------------------------------------------------
 
@@ -24,12 +25,14 @@ local format_observed_range = ns.format_observed_range
 local format_observed_evidence = ns.format_observed_evidence
 local can_edit = ns.can_edit
 local g_search_box = ns.g_search_box
+local g_changed_button = ns.g_changed_button
 local g_detail_edit = ns.g_detail_edit
 local set_status = ns.set_status
 local rebuild_view = ns.rebuild_view
 local rescan = ns.rescan
 local step_history = ns.step_history
 local copy_field = ns.copy_field
+local relayout = ns.relayout
 
 -- WoW's chat code scans globals named SLASH_<KEY><n> (n = 1, 2, ...)
 -- and routes each listed command to SlashCmdList["<KEY>"]. The
@@ -88,7 +91,8 @@ do
                 .. "ranges [name], clearrange <name>, clearranges, "
                 .. "sort name||type||scope||category||changed||range [asc||desc], "
                 .. "copy [value||raw||default||name||help||range] [cvar], "
-                .. "regex [on||off], smooth [on||off], minimap [reset], filters"
+                .. "regex [on||off], smooth [on||off], minimap [reset], filters, "
+                .. "reset"
         )
     end
 
@@ -115,12 +119,86 @@ do
     exact.refresh = refresh
     exact.rescan = refresh
 
+    -- Puts every setting back to its default. That covers the saved ones
+    -- (window place, size, smooth scrolling, minimap button) and the
+    -- session ones (search, sort, filters, pattern search). Favorites, the
+    -- change log, and observed ranges are data, so they stay.
+    exact.reset = function()
+        local db = g_frame.db
+        if not db then
+            return
+        end
+        for default_key, value in pairs(DB_DEFAULTS) do
+            db[default_key] = value
+        end
+        g_frame.close_menus()
+        g_frame:ClearAllPoints()
+        g_frame:SetPoint(db.point, UIParent, db.relativePoint, db.x, db.y)
+        if type(g_frame.minimap_button) == "table" then
+            g_frame.minimap_button:update_position()
+            g_frame.minimap_button:Show()
+        end
+        g_frame.sort_key = "name"
+        g_frame.sort_dir = "asc"
+        g_frame.regex_enabled = false
+        g_frame.filters.scope = ""
+        g_frame.filters.category = ""
+        g_frame.filters.type = ""
+        g_frame.filters.has = {}
+        g_changed_button.set_checked(false)
+        g_frame.update_sort_chip()
+        g_frame.update_regex_chip()
+        g_frame.update_filter_chip()
+        g_search_box:SetText("")
+        -- A hidden window lays out and rescans when it next shows.
+        if g_frame:IsShown() then
+            relayout()
+            rebuild_view()
+        end
+        set_status("Settings reset to defaults")
+        chat("settings reset to defaults, favorites, the log, and ranges are kept")
+    end
+
+    -- The two clear commands wipe saved data, so each has to be sent twice
+    -- within CONFIRM_SECONDS. Returns true once the repeat arrives, or at
+    -- once when there is nothing to lose.
+    local CONFIRM_SECONDS = 10
+    local pending_command = nil
+    local pending_time = 0
+
+    local function confirmed(command, count, noun)
+        local now = time()
+        if count == 0 or (pending_command == command
+            and now - pending_time <= CONFIRM_SECONDS) then
+            pending_command = nil
+            return true
+        end
+        pending_command = command
+        pending_time = now
+        chat(
+            format(
+                "this clears %d %s%s, send /cvars %s again within %d seconds to confirm",
+                count,
+                noun,
+                count == 1 and "" or "s",
+                command,
+                CONFIRM_SECONDS
+            )
+        )
+        return false
+    end
+
     exact.clearranges = function()
         local count = 0
         if g_frame.db and type(g_frame.db.observed) == "table" then
             for _ in pairs(g_frame.db.observed) do
                 count = count + 1
             end
+        end
+        if not confirmed("clearranges", count, "observed range") then
+            return
+        end
+        if g_frame.db then
             g_frame.db.observed = {}
         end
         chat(
@@ -135,6 +213,9 @@ do
 
     exact.clearlog = function()
         local count = g_frame.db and #g_frame.db.log or 0
+        if not confirmed("clearlog", count, "logged change") then
+            return
+        end
         if g_frame.db then
             g_frame.db.log = {}
         end
